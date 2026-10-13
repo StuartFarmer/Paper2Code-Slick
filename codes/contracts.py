@@ -137,3 +137,78 @@ class Diagnosis(BaseModel, extra="forbid"):
     affected_paths: list[Text] = Field(min_length=1)
     proposed_fix: Text
     regression_check: Text
+
+
+class Limits(BaseModel, extra="forbid"):
+    concurrency: int = Field(default=4, ge=1, le=4)
+    test_concurrency: int = Field(default=2, ge=1, le=2)
+    max_calls: int = Field(default=120, ge=1)
+    run_timeout: int = Field(default=3600, ge=1)
+    call_timeout: int = 600
+    input_bytes: int = 32768
+    output_tokens: int = 8192
+    schema_repairs: int = 2
+    code_fixes: int = 2
+    context_requests: int = 2
+
+
+class RunManifest(BaseModel, extra="forbid"):
+    schema_version: Literal[1] = 1
+    run_id: Text
+    input_hashes: dict[str, str]
+    image_id: Text
+    platform: Text
+    models: dict[str, str]
+    output_repo: Text
+    limits: Limits = Field(default_factory=Limits)
+    plan_hash: str = ""
+    suite_hash: str = ""
+    accepted_hash: str = ""
+    calls_reserved: int = 0
+    active_seconds: float = 0
+    active_since: float | None = None
+    outcome: Literal["incomplete", "complete", "failed", "cancelled"] = "incomplete"
+
+
+class TaskRecord(BaseModel, extra="forbid"):
+    task_id: Text
+    plan_hash: str
+    state: Literal[
+        "pending",
+        "ready",
+        "implementing",
+        "checking",
+        "reviewing",
+        "repairing",
+        "accepted",
+        "blocked",
+        "cancelled",
+    ]
+    dependencies: dict[str, str] = Field(default_factory=dict)
+    candidate_hash: str = ""
+    suite_hash: str = ""
+    image_id: str = ""
+    generations: int = 0
+    schema_repairs: int = 0
+    context_requests: int = 0
+    fixes: int = 0
+    check_artifacts: list[str] = Field(default_factory=list)
+    review_artifacts: list[str] = Field(default_factory=list)
+    candidate_artifact: str = ""
+    blocker: str = ""
+
+
+class CallRecord(BaseModel, extra="forbid"):
+    id: Text
+    role: Text
+    model: str
+    task_id: str
+    attempt: int
+    status: Literal["unknown", "completed", "failed", "cancelled"] = "unknown"
+    input_bytes: int | None = None
+    prompt_artifact: str | None = None
+    response_artifact: str | None = None
+    started: float
+    finished: float | None = None
+    measured_tokens: int | None = None
+    measured_cost: float | None = None
