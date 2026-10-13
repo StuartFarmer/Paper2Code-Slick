@@ -1,4 +1,4 @@
-# MetaPaper2Code
+# Paper2Code-Slick
 
 Generate a code repository from a research paper using one Slick workflow.
 A single `PaperCoder` class plans the implementation, analyzes each file, and
@@ -20,7 +20,7 @@ Use Python 3.10+ and keep the Slick checkout beside this repository:
 ```text
 AI/
 ├── slick/
-└── MetaPaper2Code/
+└── Paper2Code-Slick/
 ```
 
 From this repository's root:
@@ -187,10 +187,10 @@ To rebuild the diagram, install a TeX distribution with TikZ and `pdftocairo`
 (Poppler), then run from the repository root:
 
 ```bash
-mkdir -p /tmp/metapaper2code-diagram
+mkdir -p /tmp/paper2code-slick-diagram
 pdflatex -interaction=nonstopmode -halt-on-error \
-    -output-directory=/tmp/metapaper2code-diagram assets/workflow.tex
-pdftocairo -svg /tmp/metapaper2code-diagram/workflow.pdf assets/workflow.svg
+    -output-directory=/tmp/paper2code-slick-diagram assets/workflow.tex
+pdftocairo -svg /tmp/paper2code-slick-diagram/workflow.pdf assets/workflow.svg
 ```
 
 Commit both the `.tex` source and the rendered `.svg`; GitHub displays the SVG.
