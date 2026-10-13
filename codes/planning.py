@@ -1,10 +1,11 @@
 """Check cross-record references, task ownership and acceptance coverage."""
 
 import ast
-from graphlib import TopologicalSorter, CycleError
+from graphlib import CycleError, TopologicalSorter
 from pathlib import Path
 
-from .contracts import PaperSpec, Review, TaskPlan, TestSuite
+from .contracts import Extraction, PaperSpec, Review, TaskPlan, TestSuite
+from .paper import PaperIndex
 from .workflow import output_path
 
 
@@ -13,6 +14,23 @@ def unique(items, label: str) -> dict:
     if len(result) != len(items):
         raise ValueError(f"Duplicate {label} IDs")
     return result
+
+
+def validate_sources(extraction: Extraction, index: PaperIndex) -> None:
+    excerpts = {e.source_id: e for e in index.excerpts}
+    lines = index.text.splitlines(keepends=True)
+    unique(extraction.requirements, "requirement")
+    for requirement in extraction.requirements:
+        if requirement.basis == "paper" and not requirement.sources:
+            raise ValueError(f"Paper requirement has no sources: {requirement.id}")
+        for ref in requirement.sources:
+            excerpt = excerpts.get(ref.source_id)
+            if excerpt is None or not (
+                excerpt.start_line <= ref.start_line <= ref.end_line <= excerpt.end_line
+            ):
+                raise ValueError(f"Invalid source span: {ref.source_id}")
+            if ref.quote not in "".join(lines[ref.start_line - 1 : ref.end_line]):
+                raise ValueError(f"Quote not present in source span: {requirement.id}")
 
 
 def ancestors(plan: TaskPlan) -> dict[str, set[str]]:

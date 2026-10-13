@@ -1,6 +1,7 @@
 """Typed proposals at model boundaries; acceptance remains controller-owned."""
 
 from typing import Annotated, Literal
+
 from pydantic import BaseModel, Field, StringConstraints
 
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]

@@ -3,7 +3,8 @@ import copy
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from codes.contracts import PaperSpec, Review, TaskPlan, TestSuite as Suite, WorkerReply
+from codes.contracts import PaperSpec, Review, TaskPlan, WorkerReply
+from codes.contracts import TestSuite as Suite
 from codes.planning import validate_plan, validate_review, validate_suite
 
 
