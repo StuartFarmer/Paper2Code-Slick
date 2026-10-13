@@ -7,8 +7,8 @@ from test_simple_workflow import case
 from codes import workflow
 
 
-@pytest.mark.parametrize("model", ["codex", "claude", "cluade"])
-def test_unbounded_cli_backends_rejected_before_reading_paper(model, capsys):
+@pytest.mark.parametrize("model", ["claude", "cluade", "unknown"])
+def test_unknown_model_aliases_rejected_before_reading_paper(model, capsys):
     with pytest.raises(SystemExit) as error:
         workflow.main(["missing.tex", "--model", model])
     assert error.value.code == 2
@@ -125,3 +125,89 @@ def test_export_cannot_overlap_controller_state(tmp_path, monkeypatch, destinati
     # Assert
     assert result == 1 and not (tmp_path / "run").exists()
     assert "overlap" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "model, planner",
+    [
+        ("codex", None),
+        ("codex", "openai/gpt-oss-120b:nitro"),
+        ("openai/gpt-oss-120b:nitro", "codex"),
+    ],
+)
+def test_codex_routes_through_slick_cli_and_resumes(tmp_path, monkeypatch, model, planner):
+    # Arrange
+    source, _, responses = case(tmp_path)
+    paper = tmp_path / "paper.md"
+    paper.write_text(source)
+    root = tmp_path / "run"
+    provider = ScriptedProvider(responses)
+    cli_calls, api_calls = [], []
+
+    async def cli_process(self, command, prompt, *, workdir):
+        cli_calls.append((command, workdir, self.timeout))
+        text, _ = await provider.acall(prompt)
+        return json.dumps(
+            {"type": "item.completed", "item": {"type": "agent_message", "text": text}}
+        )
+
+    def api_provider(**kwargs):
+        api_calls.append(kwargs)
+        return provider
+
+    monkeypatch.setattr(workflow.CodexCLI, "_arun_process", cli_process)
+    monkeypatch.setattr(workflow, "OpenRouterAPI", api_provider)
+    monkeypatch.setattr(workflow.shutil, "which", lambda name: "/test/bin/codex")
+    monkeypatch.setattr(workflow, "executor_image", lambda name: ("sha256:image", "linux/arm64"))
+    monkeypatch.setattr(workflow, "run_check", ScriptedExecutor())
+    monkeypatch.setattr(workflow, "cleanup_run", lambda run_id: None)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    args = [str(paper), "--model", model, "--output-dir", str(root)]
+    if planner:
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-not-a-real-key")
+        args += ["--planner-model", planner]
+    # Act
+    result = workflow.main(args)
+    # Force a resume through provider construction, using all cached artifacts.
+    manifest_path = root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["outcome"] = "draft"
+    manifest_path.write_text(json.dumps(manifest))
+    resumed = workflow.main(["--resume", str(root)])
+    # Assert
+    assert result == resumed == 0
+    assert len(cli_calls) == (2 if planner else 4)
+    assert len(provider.contexts) == 4
+    assert bool(api_calls) == bool(planner)
+    assert (root / "repo/experiment.ipynb").exists()
+    for command, workdir, timeout in cli_calls:
+        assert command == [
+            "codex",
+            "--disable",
+            "shell_tool",
+            "--disable",
+            "unified_exec",
+            "exec",
+            "--json",
+            "--sandbox",
+            "read-only",
+            "-",
+        ]
+        assert workdir == workflow.ROOT and timeout == 600
+
+
+@pytest.mark.parametrize(
+    "models, missing",
+    [
+        ({"worker": "codex", "planner": "codex"}, "Codex CLI"),
+        ({"worker": "codex", "planner": "openai/gpt-oss-120b:nitro"}, "OPENROUTER_API_KEY"),
+        ({"worker": "openai/gpt-oss-120b:nitro", "planner": "codex"}, "OPENROUTER_API_KEY"),
+    ],
+)
+def test_selected_backends_report_missing_setup(monkeypatch, models, missing):
+    # Arrange
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr(workflow.shutil, "which", lambda name: None)
+    # Act / Assert
+    with pytest.raises(ValueError, match=missing):
+        workflow.check_backends(models)

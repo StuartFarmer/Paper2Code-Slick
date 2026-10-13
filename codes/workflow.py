@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 import sys
 import uuid
@@ -11,7 +12,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 from slick import prompts
-from slick.providers import OpenRouterAPI
+from slick.providers import CodexCLI, OpenRouterAPI
 
 from .agent import OPERATIONS, PaperCoder, run_workflow
 from .contracts import Limits, RunManifest
@@ -56,7 +57,17 @@ async def preflight_templates(coder: PaperCoder) -> None:
         await getattr(coder, name).render(coder, {})
 
 
+def check_backends(models: dict[str, str]) -> None:
+    if any(model != "codex" for model in models.values()) and not os.environ.get(
+        "OPENROUTER_API_KEY"
+    ):
+        raise ValueError("Set OPENROUTER_API_KEY for OpenRouter models")
+    if "codex" in models.values() and shutil.which("codex") is None:
+        raise ValueError("Codex CLI is not on PATH. Install it and run `codex login` first")
+
+
 def run(store: RunStore, paper: str) -> int:
+    check_backends(store.manifest.models)
     templates = ROOT / "codes/prompts/simple"
     for path in sorted(templates.glob("*.j2")):
         name = "prompts/simple/" + path.name
@@ -65,7 +76,13 @@ def run(store: RunStore, paper: str) -> int:
     prompts.TEMPLATE_ROOT = store.root / "prompts"
     limits = store.manifest.limits
     providers = {
-        role: OpenRouterAPI(
+        role: CodexCLI(
+            command="codex --disable shell_tool --disable unified_exec",
+            timeout=limits.call_timeout,
+            workdir=ROOT,
+        )
+        if model == "codex"
+        else OpenRouterAPI(
             model=model,
             timeout=limits.call_timeout,
             max_output_tokens=limits.output_tokens,
@@ -80,8 +97,6 @@ def run(store: RunStore, paper: str) -> int:
         executor=run_check,
     )
     asyncio.run(preflight_templates(coder))
-    if store.manifest.outcome != "complete" and not os.environ.get("OPENROUTER_API_KEY"):
-        raise ValueError("Set OPENROUTER_API_KEY before starting or resuming an incomplete run")
     output = asyncio.run(run_workflow(coder, paper))
     print(f"Report: {store.root / 'report.md'}")
     if output:
@@ -96,8 +111,12 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--resume", type=Path, help="Resume a frozen run without overriding its settings"
     )
-    parser.add_argument("--model", help=f"OpenRouter provider/model ID (default: {DEFAULT_MODEL})")
-    parser.add_argument("--planner-model")
+    parser.add_argument(
+        "--model", help=f"codex or OpenRouter provider/model ID (default: {DEFAULT_MODEL})"
+    )
+    parser.add_argument(
+        "--planner-model", help="Override planning and test-writing model; defaults to --model"
+    )
     parser.add_argument(
         "--executor-image", help="Locally built Docker image (default: paper2code-executor:local)"
     )
@@ -117,12 +136,14 @@ def main(argv=None) -> int:
     if not args.resume and not args.paper:
         parser.error("Provide a paper or --resume RUN_DIRECTORY")
     for model in (args.model, args.planner_model):
-        if model is not None and (
-            "/" not in model or not all(model.split("/", 1)) or any(c.isspace() for c in model)
-        ):
-            parser.error(
-                "This workflow requires an OpenRouter provider/model ID; codex and claude CLI aliases are unsupported"
+        if (
+            model is not None
+            and model != "codex"
+            and (
+                "/" not in model or not all(model.split("/", 1)) or any(c.isspace() for c in model)
             )
+        ):
+            parser.error("Use codex or an OpenRouter provider/model ID")
     try:
         if args.resume:
             with RunStore.open(args.resume) as store:
@@ -189,22 +210,19 @@ def main(argv=None) -> int:
                 "Output already exists. Omit output flags to choose a fresh folder, "
                 "or use --resume RUN_DIRECTORY"
             )
-        if not os.environ.get("OPENROUTER_API_KEY"):
-            raise ValueError("Set OPENROUTER_API_KEY before starting a run")
+        model = args.model or DEFAULT_MODEL
+        models = {"worker": model, "planner": args.planner_model or model}
+        check_backends(models)
         limits = Limits(
             **{k: v for k, v in vars(args).items() if k in Limits.model_fields and v is not None}
         )
         image_id, platform = executor_image(args.executor_image or "paper2code-executor:local")
-        model = args.model or DEFAULT_MODEL
         manifest = RunManifest(
             run_id=uuid.uuid4().hex,
             input_hashes=inputs(original, paper),
             image_id=image_id,
             platform=platform,
-            models={
-                "worker": model,
-                "planner": args.planner_model or model,
-            },
+            models=models,
             output_repo=str(repo),
             limits=limits,
         )

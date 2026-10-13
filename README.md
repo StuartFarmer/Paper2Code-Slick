@@ -12,7 +12,7 @@ repairs, then write the notebook. Keep the code even when verification fails.
 
 ```bash
 uv sync --group dev
-export OPENROUTER_API_KEY="your-openrouter-key"
+export OPENROUTER_API_KEY="your-openrouter-key"  # only for OpenRouter models
 ./scripts/build-executor.sh
 ```
 
@@ -64,9 +64,27 @@ An explicit `--output-dir` must be unused; omit `--output-repo-dir` to default t
 its `repo/` child. Separate export directories still work. Exports cannot overlap
 the run's internal state or contain the run directory.
 
-Model names are OpenRouter provider/model IDs;
-`:nitro` is preserved. `--planner-model` optionally changes the planning/test model.
-This branch currently uses OpenRouter rather than Codex/Claude CLI providers.
+`--model` accepts `codex` for Slick's Codex CLI provider, or an OpenRouter
+`provider/model` ID (`:nitro` is preserved). `--planner-model` overrides planning
+and test writing; generation, repairs and the notebook use `--model`. When omitted,
+the planner uses the same model/backend.
+
+To use your installed Codex CLI for every step:
+
+```bash
+codex login  # once, if not already signed in
+uv run python -m codes.workflow sources/arXiv-1302.6927v1/arma_arxiv.tex --model codex
+```
+
+Codex uses its configured default model and authentication; no OpenRouter key is
+needed when both roles use Codex. Each call starts a fresh CLI conversation with
+the existing workflow timeout, a read-only sandbox and shell tools disabled.
+The workflow writes returned code and runs its checks in Docker.
+
+You can mix backends, for example `--model openai/gpt-oss-120b:nitro
+--planner-model codex` to use Codex for planning/tests and Nitro for implementation.
+A mixed run needs the OpenRouter key and Codex login. Both backend choices are
+saved for resume.
 
 ## The workflow
 
