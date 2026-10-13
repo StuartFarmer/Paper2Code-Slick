@@ -41,7 +41,8 @@ verified wheel lock. Generated projects cannot install extra dependencies during
 
 The paper argument accepts extracted `.json`, `.md`/`.markdown`, or `.tex`, not
 PDFs or directories. LaTeX is indexed without expanding external `\input` files;
-unresolved references remain visible in the evidence. Supply consolidated source
+unresolved references remain visible in the evidence. Missing method references
+identified during extraction block the run and are retained in the report. Supply consolidated source
 when relevant methods live in other files.
 
 Defaults are `openai/gpt-oss-120b:nitro`, `outputs/Transformer`, and

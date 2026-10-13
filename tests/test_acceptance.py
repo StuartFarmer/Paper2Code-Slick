@@ -107,3 +107,71 @@ def test_vacuous_suite_cannot_freeze_even_if_reviewer_would_pass(tmp_path, monke
         with pytest.raises(ValueError, match="scaffold"):
             asyncio.run(coder.prepare_acceptance(spec, plan, index_paper(paper)))
         assert "suite.json" not in store.artifacts
+
+
+def test_planning_batches_count_source_excerpts_before_dispatch(tmp_path, monkeypatch):
+    from test_task_loop import PASS
+
+    from codes.contracts import Extraction, PaperSpec, SourceRef, TaskPlan
+
+    monkeypatch.setattr(
+        prompts, "TEMPLATE_ROOT", Path(__file__).resolve().parents[1] / "codes/prompts"
+    )
+    source = tmp_path / "paper.md"
+    source.write_text(("x" * 10000 + "\n\n") * 3)
+    index = index_paper(source)
+    assert len(index.excerpts) == 3
+    template, plan = spec_plan()
+    extractions, remaining, fragments, plans = [], [], [], []
+    for i, excerpt in enumerate(index.excerpts):
+        requirement = template.requirements[0].model_copy(
+            update={
+                "id": f"r{i}",
+                "sources": [
+                    SourceRef(
+                        source_id=excerpt.source_id,
+                        start_line=excerpt.start_line,
+                        end_line=excerpt.end_line,
+                        quote="xxx",
+                    )
+                ],
+            }
+        )
+        interface = template.interfaces[0].model_copy(update={"id": f"i{i}", "module": f"m{i}"})
+        spec = PaperSpec(
+            requirements=[requirement], interfaces=[interface], global_invariants=[], deviations=[]
+        )
+        task = plan.tasks[0].model_copy(
+            update={
+                "id": f"t{i}",
+                "requirement_ids": [f"r{i}"],
+                "owned_paths": [f"m{i}.py"],
+                "produces": [f"i{i}"],
+            }
+        )
+        fragment = TaskPlan(tasks=[task], integration_criteria=["all modules work"])
+        extractions.append(
+            Extraction(requirements=[requirement], unresolved_references=[]).model_dump_json()
+        )
+        fragments.append(spec)
+        plans.append(fragment)
+    for ids in ([0, 1], [2]):
+        merged = PaperSpec(
+            requirements=[r for i in ids for r in fragments[i].requirements],
+            interfaces=[v for i in ids for v in fragments[i].interfaces],
+            global_invariants=[],
+            deviations=[],
+        )
+        tasks = TaskPlan(
+            tasks=[t for i in ids for t in plans[i].tasks],
+            integration_criteria=["all modules work"],
+        )
+        remaining += [merged.model_dump_json(), PASS, tasks.model_dump_json()]
+    settings = manifest()
+    settings.limits.max_calls = 20
+    with RunStore.create(tmp_path / "run", settings) as store:
+        provider = ScriptedProvider(extractions + remaining)
+        spec, plan = asyncio.run(PaperCoder(store, provider).prepare_plan(index))
+        assert len(spec.requirements) == len(plan.tasks) == 3
+        assert len(provider.contexts) == 9
+        assert all(len(p.encode()) <= 32768 for p in provider.contexts)

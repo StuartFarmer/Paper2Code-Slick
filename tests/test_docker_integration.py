@@ -178,3 +178,17 @@ def test_complete_workflow_uses_real_execution(tmp_path, monkeypatch):
         report = json.loads((store.root / "report.json").read_text())
         assert report["integration_verified"]
         assert report["outcome"] == "complete"
+
+
+def test_generated_module_import_error_is_repairable(tmp_path):
+    work, suite = staged(tmp_path, source="raise ValueError('bad module initialization')\n")
+    result = asyncio.run(
+        run_check(
+            CheckSpec(id="imports", kind="imports", targets=["a"]),
+            work,
+            suite,
+            os.environ["P2C_TEST_IMAGE"],
+        )
+    )
+    assert result.status == "failed"
+    assert "bad module initialization" in Path(result.stderr_artifact).read_text()

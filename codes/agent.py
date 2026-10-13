@@ -13,7 +13,7 @@ from pathlib import Path
 from pydantic import TypeAdapter, ValidationError
 from slick import Session, prompt, workflow
 
-from .context import bounded_groups, build_packet, check_input_size, resolve_context
+from .context import build_packet, check_input_size, resolve_context
 from .contracts import (
     Candidate,
     CheckSpec,
@@ -151,31 +151,32 @@ class PaperCoder:
                     f"Final {check.id} failed: {result.status}; see integration evidence"
                 )
         self.integration_verified = True
-        for number, group in enumerate(
-            bounded_groups([r.model_dump() for r in self.spec.requirements])
-        ):
+
+        def fidelity_packet(group):
             ids = {r["id"] for r in group}
-            source_ids = {s["source_id"] for r in group for s in r["sources"]}
+            source_ids = {ref["source_id"] for r in group for ref in r["sources"]}
+            return {
+                "requirements": group,
+                "sources": [asdict(e) for e in self.index.excerpts if e.source_id in source_ids],
+                "properties": [
+                    p.model_dump() for p in self.suite.properties if set(p.requirement_ids) & ids
+                ],
+                "task_evidence": [
+                    self.records[t.id].model_dump()
+                    for t in self.plan.tasks
+                    if set(t.requirement_ids) & ids
+                ],
+                "deviations": self.spec.deviations,
+                "unresolved_inputs": self.unresolved_references,
+            }
+
+        number = 0
+        async for packet in self.bounded_packets(
+            "review_fidelity", [r.model_dump() for r in self.spec.requirements], fidelity_packet
+        ):
             review = await self.cached(
                 "review_fidelity",
-                {
-                    "requirements": group,
-                    "sources": [
-                        asdict(e) for e in self.index.excerpts if e.source_id in source_ids
-                    ],
-                    "properties": [
-                        p.model_dump()
-                        for p in self.suite.properties
-                        if set(p.requirement_ids) & ids
-                    ],
-                    "task_evidence": [
-                        self.records[t.id].model_dump()
-                        for t in self.plan.tasks
-                        if set(t.requirement_ids) & ids
-                    ],
-                    "deviations": self.spec.deviations,
-                    "unresolved_inputs": self.index.unresolved_references,
-                },
+                packet,
                 f"integration/{integrated_hash}/fidelity-{number}.json",
                 validator=validate_review,
             )
@@ -183,6 +184,7 @@ class PaperCoder:
                 raise ValueError(
                     f"Final fidelity review blocked group {number}: {review.model_dump_json()}"
                 )
+            number += 1
         files.update({f.path: f.content for f in self.suite.files})
         accepted_root = self.store.root / "accepted"
         accepted_hash = materialize_snapshot(accepted_root, files)
@@ -302,6 +304,7 @@ class PaperCoder:
             deviations=spec.deviations if spec else [],
             properties={p.id: p for p in suite.properties} if suite else {},
             calibration={p.id: "uncalibrated" for p in suite.properties} if suite else {},
+            unresolved_references=getattr(self, "unresolved_references", []),
             blocked_tasks={name: r.blocker for name, r in records.items() if r.state != "accepted"},
             calls_reserved=self.store.manifest.calls_reserved,
             active_seconds=self.store.manifest.active_seconds,
@@ -754,7 +757,33 @@ class PaperCoder:
         self.store.save_manifest()
         return suite
 
+    async def bounded_packets(self, name, records, packet_for):
+        """Partition using the real prompt, including evidence and schema bytes."""
+        group = []
+        operation = getattr(self, name)
+        for record in records:
+            proposed = [*group, record]
+            rendered = await operation.render(self, packet_for(proposed))
+            if group and (
+                len(rendered.encode()) > self.store.manifest.limits.input_bytes
+                or len(json.dumps(proposed).encode()) > 8192
+            ):
+                yield packet_for(group)
+                group = []
+            group.append(record)
+            check_input_size(
+                await operation.render(self, packet_for(group)),
+                self.store.manifest.limits.input_bytes,
+            )
+        if group:
+            yield packet_for(group)
+
     async def prepare_plan(self, index: PaperIndex) -> tuple[PaperSpec, TaskPlan]:
+        self.unresolved_references = list(index.unresolved_references)
+        if "source/unresolved.json" in self.store.artifacts:
+            self.unresolved_references = json.loads(
+                self.store.read_artifact("source/unresolved.json")
+            )
         if "plan.json" in self.store.artifacts:
             spec = PaperSpec.model_validate_json(self.store.read_artifact("spec.json"))
             plan = TaskPlan.model_validate_json(self.store.read_artifact("plan.json"))
@@ -777,16 +806,33 @@ class PaperCoder:
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
             raise
+        unresolved = list(
+            dict.fromkeys(ref for result in extractions for ref in result.unresolved_references)
+        )
+        self.unresolved_references = list(
+            dict.fromkeys([*index.unresolved_references, *unresolved])
+        )
+        self.store.save_artifact("source/unresolved.json", json.dumps(self.unresolved_references))
+        if unresolved:
+            raise ValueError(
+                "Unresolved extracted references require consolidated source or explicit clarification: "
+                + "; ".join(unresolved)
+            )
         requirements, interfaces, invariants, deviations, tasks, criteria = {}, {}, [], [], [], []
         extracted = [r.model_dump() for result in extractions for r in result.requirements]
-        for number, group in enumerate(bounded_groups(extracted)):
-            source_ids = {s["source_id"] for r in group for s in r["sources"]}
-            packet = {
+        number = 0
+
+        def planning_packet(group):
+            source_ids = {ref["source_id"] for r in group for ref in r["sources"]}
+            return {
                 "requirements": group,
                 "id_prefix": f"g{number}",
                 "sources": [asdict(e) for e in index.excerpts if e.source_id in source_ids],
                 "interface_registry": [i.model_dump() for i in interfaces.values()],
             }
+
+        async for packet in self.bounded_packets("reconcile_spec", extracted, planning_packet):
+            group = packet["requirements"]
 
             def validate_fragment(fragment, group=group):
                 if {r.id for r in fragment.requirements} != {r["id"] for r in group}:
@@ -839,6 +885,7 @@ class PaperCoder:
                 raise ValueError("Task fragment escaped allocated requirements")
             tasks.extend(plan_fragment.tasks)
             criteria.extend(plan_fragment.integration_criteria)
+            number += 1
         spec = PaperSpec(
             requirements=list(requirements.values()),
             interfaces=list(interfaces.values()),

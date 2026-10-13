@@ -92,6 +92,9 @@ def materialize_snapshot(root: Path, files: dict[str, str]) -> str:
             path = output_path(temporary, name)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")
+            path.chmod(0o644)
+        for directory in [temporary, *(p for p in temporary.rglob("*") if p.is_dir())]:
+            directory.chmod(0o755)
         os.rename(temporary, root)
     finally:
         if temporary.exists():
@@ -296,7 +299,7 @@ async def run_check(
             try:
                 result = parse_report(stdout_result[1], check)
                 status = "passed" if process.returncode == result["exit_code"] == 0 else "failed"
-                if result.get("errors") and check.kind != "syntax":
+                if result.get("errors") and check.kind not in {"syntax", "imports"}:
                     status = "infrastructure_error"
             except (ValueError, TypeError):
                 status = "infrastructure_error"
@@ -305,11 +308,23 @@ async def run_check(
     except asyncio.CancelledError:
         status, cancelled = "cancelled", True
     finally:
-        await asyncio.shield(control("rm", "--force", name))
-        if process.returncode is None:
-            process.kill()
-        await process.wait()
-        drained = await asyncio.gather(*drains)
+
+        async def cleanup():
+            try:
+                await control("rm", "--force", name)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                await process.wait()
+            return await asyncio.gather(*drains)
+
+        removal = asyncio.create_task(cleanup())
+        while True:
+            try:
+                drained = await asyncio.shield(removal)
+                break
+            except asyncio.CancelledError:
+                status, cancelled = "cancelled", True
     truncated = any(item[0] for item in drained)
     outcome = ExecutionResult(
         check_id=check.id,

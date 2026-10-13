@@ -119,3 +119,28 @@ def test_integration_regression_reopens_task_with_bounded_repair(tmp_path, monke
         output = asyncio.run(run_verified(coder, index_paper(paper)))
         assert output is not None
         assert coder.records["a"].fixes == 1
+
+
+def test_extracted_missing_method_reference_blocks_export_and_survives_report(
+    tmp_path, monkeypatch
+):
+    import pytest
+
+    monkeypatch.setattr(
+        prompts, "TEMPLATE_ROOT", Path(__file__).resolve().parents[1] / "codes/prompts"
+    )
+    paper, settings, responses = case(tmp_path)
+    extraction = json.loads(responses[0])
+    warning = "The core recurrence equation is missing; implementation cannot be determined."
+    extraction["unresolved_references"] = [warning]
+    responses[0] = json.dumps(extraction)
+    with RunStore.create(tmp_path / "run", settings) as store:
+        coder = PaperCoder(
+            store, ScriptedProvider(responses), executor=ScriptedExecutor(["failed", "failed"])
+        )
+        with pytest.raises(ValueError, match="Unresolved"):
+            asyncio.run(run_verified(coder, index_paper(paper)))
+        report = json.loads((store.root / "report.json").read_text())
+        assert warning in report["unresolved_references"]
+        assert report["outcome"] != "complete"
+        assert not Path(settings.output_repo).exists()

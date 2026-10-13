@@ -144,3 +144,80 @@ def test_cleanup_targets_only_the_locked_run(monkeypatch):
     assert "label=paper2code.run=run123" in calls[0]
     assert "label=paper2code.executor=true" in calls[0]
     assert calls[1] == ["docker", "rm", "--force", "p2c-orphan"]
+
+
+def test_cancellation_waits_for_container_removal(tmp_path, monkeypatch):
+    import asyncio
+
+    from codes.contracts import CheckSpec
+    from codes.execution import run_check
+
+    async def exercise():
+        removing, release, removed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        class Process:
+            def __init__(self, kind):
+                self.kind = kind
+                self.returncode = 0
+                self.stdout = asyncio.StreamReader()
+                self.stdout.feed_eof()
+                self.stderr = asyncio.StreamReader()
+                self.stderr.feed_eof()
+
+            async def wait(self):
+                return self.returncode
+
+            def kill(self):
+                self.returncode = -9
+
+            async def communicate(self):
+                if self.kind == "rm":
+                    removing.set()
+                    await release.wait()
+                    removed.set()
+                return (b"{}", b"")
+
+        async def start(*args, **kwargs):
+            return Process(args[1])
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", start)
+        work = tmp_path / "work"
+        work.mkdir()
+        (work / "a.py").write_text("x=1")
+        suite = tmp_path / "suite"
+        suite.mkdir()
+        task = asyncio.create_task(
+            run_check(
+                CheckSpec(id="syntax", kind="syntax", targets=["a.py"]), work, suite, "sha256:test"
+            )
+        )
+        await asyncio.wait_for(removing.wait(), 1)
+        task.cancel()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        returned_before_removal = task.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.wait_for(removed.wait(), 1)
+        assert not returned_before_removal
+        assert len(list((tmp_path / "checks").glob("*/result.json"))) == 1
+
+    asyncio.run(exercise())
+
+
+def test_published_snapshot_is_readable_by_executor_under_private_umask(tmp_path):
+    import os
+    import stat
+
+    from codes.execution import materialize_snapshot
+
+    root = tmp_path / "snapshot"
+    previous = os.umask(0o077)
+    try:
+        materialize_snapshot(root, {"pkg/a.py": "x=1\n"})
+    finally:
+        os.umask(previous)
+    assert stat.S_IMODE(root.stat().st_mode) == 0o755
+    assert stat.S_IMODE((root / "pkg").stat().st_mode) == 0o755
+    assert stat.S_IMODE((root / "pkg/a.py").stat().st_mode) == 0o644

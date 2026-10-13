@@ -277,6 +277,7 @@ class RunReport(BaseModel, extra="forbid"):
     requirements: dict[str, RequirementEvidence]
     properties: dict[str, PropertySpec]
     calibration: dict[str, Literal["uncalibrated"]]
+    unresolved_references: list[str]
     deviations: list[str]
     blocked_tasks: dict[str, str]
     calls_reserved: int
