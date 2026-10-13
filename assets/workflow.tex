@@ -1,0 +1,84 @@
+\documentclass[tikz,border=12pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\renewcommand{\familydefault}{\sfdefault}
+\usetikzlibrary{arrows.meta,backgrounds,calc,positioning}
+
+\definecolor{ink}{HTML}{16283D}
+\definecolor{muted}{HTML}{526477}
+\definecolor{line}{HTML}{C7D2DE}
+\definecolor{blue}{HTML}{2663B5}
+\definecolor{bluewash}{HTML}{EEF5FF}
+\definecolor{teal}{HTML}{087F80}
+\definecolor{tealwash}{HTML}{EDF9F6}
+\definecolor{violet}{HTML}{7152AD}
+\definecolor{violetwash}{HTML}{F5F1FC}
+
+\begin{document}
+\begin{tikzpicture}[
+    font=\sffamily\color{ink},
+    >={Latex[length=2.5mm,width=1.7mm]},
+    flow/.style={->,draw=ink,line width=0.9pt},
+    card/.style={rounded corners=7pt,draw=line,line width=0.6pt},
+    planstep/.style={rounded corners=4pt,draw=blue!35,fill=white,
+        minimum width=3.65cm,minimum height=0.56cm,font=\small},
+    annotation/.style={font=\small\color{muted},align=center},
+    background rectangle/.style={fill=white},
+    show background rectangle
+]
+    \node[font=\Large\bfseries,anchor=west] at (-2.3,2.2) {Paper to repository, one Slick workflow};
+    \node[annotation,anchor=west] at (-2.3,1.65)
+        {One \texttt{PaperCoder} class \enspace / \enspace six local Jinja templates};
+
+    \node[card,fill=white,minimum width=4.6cm,minimum height=0.9cm,align=center]
+        (input) at (0,0.45) {\textbf{Research paper}\\[-1pt]\small PDF extraction JSON or LaTeX};
+
+    \path[card,fill=bluewash] (-2.3,-0.8) rectangle (2.3,-5.25);
+    \path[card,fill=tealwash] (3.1,-0.8) rectangle (7.7,-5.25);
+    \path[card,fill=violetwash] (8.5,-0.8) rectangle (13.1,-5.25);
+
+    \node[font=\large\bfseries,text=blue] at (0,-1.2) {1 \enspace Plan};
+    \node[annotation] at (0,-1.72) {Four calls, one shared session};
+    \node[planstep] (overview) at (0,-2.35) {Overview};
+    \node[planstep] (design) at (0,-3.10) {Architecture and interfaces};
+    \node[planstep] (tasks) at (0,-3.85) {Ordered file tasks};
+    \node[planstep] (config) at (0,-4.60) {\texttt{config.yaml}};
+    \draw[flow,draw=blue] (overview) -- (design);
+    \draw[flow,draw=blue] (design) -- (tasks);
+    \draw[flow,draw=blue] (tasks) -- (config);
+
+    \node[font=\large\bfseries,text=teal] at (5.4,-1.2) {2 \enspace Analyze};
+    \node[annotation] at (5.4,-1.72) {One fresh session per file};
+    \node[align=center,text width=3.9cm] at (5.4,-2.75)
+        {Read the paper, plan,\\design, tasks, and config};
+    \node[card,draw=teal!40,fill=white,text width=3.55cm,
+        minimum height=0.85cm,align=center] at (5.4,-3.70)
+        {Detailed logic analysis\\for each planned file};
+    \node[annotation,text width=3.9cm] at (5.4,-4.75) {Finish all analyses\\before coding};
+
+    \node[font=\large\bfseries,text=violet] at (10.8,-1.2) {3 \enspace Code};
+    \node[annotation] at (10.8,-1.72) {One fresh session per file};
+    \node[card,draw=violet!40,fill=white,text width=3.35cm,
+        minimum height=0.85cm,align=center] (generate) at (10.8,-2.75)
+        {Generate file $i$\\using its analysis};
+    \node[align=center] (write) at (10.8,-3.75) {Write file $i$ to disk};
+    \draw[flow,draw=violet] (generate) -- (write);
+    \draw[flow,draw=violet] (write.east) -- (12.8,-3.75)
+        -- (12.8,-2.75) -- (generate.east);
+    \node[annotation,text width=3.9cm] at (10.8,-4.70)
+        {Carry written code into\\the next file's prompt};
+
+    \draw[flow] (input.south) -- (0,-0.8);
+    \draw[flow] (2.3,-3.05) -- (3.1,-3.05);
+    \draw[flow] (7.7,-3.05) -- (8.5,-3.05);
+
+    \node[card,fill=white,minimum width=4.6cm,minimum height=0.9cm,align=center]
+        (output) at (10.8,-6.30) {\textbf{Generated repository}\\[-1pt]\small Config + source files};
+    \draw[flow] (10.8,-5.25) -- (output.north);
+    \node[annotation,text width=9.6cm,anchor=west,align=left] at (-2.3,-6.30)
+        {Every call saves its raw Slick session history.\\
+         All calls run sequentially: $4 + 2N$ calls for $N$ files, excluding config.};
+    \node[annotation,anchor=west] at (-2.3,-7.25)
+        {Generates files only; does not execute or evaluate the generated code.};
+\end{tikzpicture}
+\end{document}

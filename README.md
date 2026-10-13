@@ -1,41 +1,35 @@
-# 📄 Paper2Code: Automating Code Generation from Scientific Papers in Machine Learning
+# MetaPaper2Code
 
-**Minju Seo, Jinheon Baek†, Seongyun Lee, and Sung Ju Hwang†** († denotes equal advising)  
-International Conference on Learning Representations (ICLR), 2026  
-📄 [Read the paper](https://arxiv.org/abs/2504.17192)  
+Generate a code repository from a research paper using one Slick workflow.
+A single `PaperCoder` class plans the implementation, analyzes each file, and
+writes code in dependency order. Model instructions live in six local Jinja
+templates.
 
-![PaperCoder Overview](./assets/papercoder_overview.png)
+This fork adapts [Paper2Code](https://github.com/going-doer/Paper2Code). It retains
+the three-stage method and prompt wording while replacing the separate scripts
+and provider-specific implementations with Slick sessions and providers.
 
-**PaperCoder** is the multi-agent LLM system introduced in **Paper2Code**, designed to transform a paper into a code repository.
-It follows a three-stage pipeline: planning, analysis, and code generation, each handled by specialized agents.
-Our method outperforms strong baselines on both Paper2Code and PaperBench and produces faithful, high-quality implementations.
+![Slick workflow: paper input, four planning calls in a shared session, independent per-file analysis, sequential coding with previously written code, and a generated repository.](assets/workflow.svg)
 
----
+[TikZ source](assets/workflow.tex)
 
-## 🗺️ Table of Contents
+## Run it
 
-- [⚡ Quick Start](#-quick-start)
-- [📚 Detailed Setup Instructions](#-detailed-setup-instructions)
-- [📦 Paper2Code Benchmark Datasets](#-paper2code-benchmark-datasets)
+Use Python 3.10+ and keep the Slick checkout beside this repository:
 
----
+```text
+AI/
+├── slick/
+└── MetaPaper2Code/
+```
 
-## ⚡ Quick Start
-
-PaperCoder runs as one Slick workflow: four planning calls share a session,
-then every file is analyzed independently and implemented in dependency order.
-The six prompt templates live in `codes/prompts/`; the original prompt wording
-and tagged response formats are retained. Each template combines the former
-system and user instructions into Slick's user context, so this is not an exact
-reproduction of the original message roles or model settings.
-
-Install Python 3.10+ and the adjacent Slick checkout:
+From this repository's root:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt  # expects ../slick
-export OPENAI_API_KEY="<OPENAI_API_KEY>"
+pip install -r requirements.txt
+export OPENAI_API_KEY="<your-api-key>"
 
 python -m codes.workflow examples/Transformer.json \
     --model o3-mini \
@@ -43,137 +37,173 @@ python -m codes.workflow examples/Transformer.json \
     --output-repo-dir outputs/Transformer_repo
 ```
 
-JSON extraction metadata is cleaned automatically. To use LaTeX, pass
-`examples/Transformer_cleaned.tex` instead. Convenience commands also
-work from any directory:
+The JSON input is a paper extracted from a PDF, not the PDF itself. Extraction
+metadata is removed automatically. For LaTeX, pass
+`examples/Transformer_cleaned.tex` instead. To prepare a PDF, use a converter
+such as [s2orc-doc2json](https://github.com/allenai/s2orc-doc2json) first.
 
-```bash
-bash scripts/run.sh
-bash scripts/run_latex.sh
-```
+The CLI defaults to `o3-mini`, `outputs/Transformer`, and
+`outputs/Transformer_repo`. Set both output paths when starting a separate run:
+matching files are overwritten, and unrelated existing files are retained.
 
-The scripts accept `PAPER_PATH`, `MODEL_NAME`, `OUTPUT_DIR`, `OUTPUT_REPO_DIR`,
-and `PYTHON` environment overrides. Relative paths are resolved from this repository.
-Additional CLI flags can be appended to the script command.
+## How the workflow runs
+
+1. **Plan.** Four calls share one session: reproduction overview, architecture
+   and interfaces, ordered file tasks, and configuration. The workflow validates
+   the task list and generated paths before writing the repository.
+2. **Analyze.** Each planned file gets a fresh session containing the paper,
+   plan, design, task list, and config. All file analyses finish before coding
+   begins.
+3. **Code.** Files are generated sequentially in task order. Each call gets a
+   fresh session with that file's analysis and previously generated source code.
+   `config.yaml` comes from planning and is not generated again.
+
+A successful run makes **4 + 2N model calls**, where N is the number of planned
+files other than `config.yaml`. Analysis calls have independent context but run
+sequentially too. The workflow writes code; it does not execute it, install its
+dependencies, or evaluate whether it reproduces the paper.
+
+Planning JSON must be valid. Invalid output and provider errors stop the run
+without automatic retries or repair. Partial files and call logs remain on disk.
+Rerunning starts from planning; this CLI does not enable persistent workflow
+resume. Generated paths cannot escape the output directory or use hidden paths
+or symlinks beneath it.
+
+## Outputs
 
 ```text
 outputs/
 ├── Transformer/
-│   ├── planning/       # overview, design, tasks, and config
-│   ├── analysis/       # per-file logic analysis
-│   └── calls/          # raw Slick session histories
+│   ├── planning/
+│   │   ├── overview.txt
+│   │   ├── design.json
+│   │   ├── tasks.json
+│   │   └── config.yaml
+│   ├── analysis/
+│   │   └── <filename>.txt
+│   ├── calls/
+│   │   ├── planning.json
+│   │   ├── analysis/<filename>.json
+│   │   └── coding/<filename>.json
+│   └── failure.json                 # model-call or empty-response failure
 └── Transformer_repo/
     ├── config.yaml
     └── ...generated files
 ```
 
-The workflow writes files but does not execute generated code. Existing files
-with the same names are overwritten; use a new output directory for a separate
-run. Generated paths cannot traverse outside the output directories or use
-hidden paths or symlinks below them. Calls are sequential with no automatic
-retries. Raw Slick session histories are saved after each call, including
-responses rejected during parsing; model call failures also write `failure.json`.
-Planning JSON must be valid; malformed model output is rejected without repair.
-A failed run leaves partial artifacts and files. Rerunning starts from planning;
-`@workflow` alone does not enable persistent resume.
+Nested filenames retain their directories. Call logs contain Slick session
+history, including the rendered context, raw response text, and tool work.
+Responses remain available even if later parsing fails. No token or cost
+reports are produced.
 
-`calls/planning.json` contains the four planning exchanges;
-`calls/analysis/<filename>.json` and `calls/coding/<filename>.json` contain
-independent file exchanges. Each record uses Slick's session-history format,
-including `context`, `text`, and tool work. There are no OpenAI response envelopes
-or token/cost reports. OpenAI uses Slick's Responses provider with a 32,768-token
-output cap and its default reasoning setting; compatible chat endpoints use an
-8,192-token cap.
+## Use a local model
 
-The numbered pipeline scripts and standalone evaluation, configuration-refinement,
-and debugging commands have been removed. Use `python -m codes.workflow` or the
-shell launchers above. Paper data and reference repositories remain in `data/`
-and `examples/`.
-
-## 📚 Detailed Setup Instructions
-
-### Open-source models with vLLM
-
-Start an OpenAI-compatible vLLM server in your GPU environment:
-
-```bash
-pip install vllm
-vllm serve deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct --tensor-parallel-size 2
-```
-
-In the workflow environment, install Slick's chat provider extra and run:
+The same workflow can call an OpenAI-compatible chat endpoint through Slick's
+LiteLLM provider. For a vLLM server, install Slick's extra in the workflow
+environment:
 
 ```bash
 pip install -e '../slick[litellm]'
-export OPENAI_API_KEY="local"  # use your server's key if authentication is enabled
-bash scripts/run_llm.sh
-# Or: bash scripts/run_latex_llm.sh
+export OPENAI_API_KEY="local"  # substitute your server's key if required
+
+python -m codes.workflow examples/Transformer.json \
+    --model deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct \
+    --api-base http://localhost:8000/v1 \
+    --output-dir outputs/Transformer_dscoder \
+    --output-repo-dir outputs/Transformer_dscoder_repo
 ```
 
-Set `API_BASE` to change the default `http://localhost:8000/v1`, or pass
-`--api-base` and `--model` directly to `python -m codes.workflow`.
+Start the server separately in your GPU environment, with vLLM installed:
 
-### Python API and tests
+```bash
+vllm serve deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct --tensor-parallel-size 2
+```
 
-Configure the template root once at application startup, then inject a Slick
-provider. The root is process-global.
+The CLI uses `OpenAIAPI` by default and `LiteLLMAPI` when `--api-base` is supplied.
+Both use a 600-second timeout with no retries. Output caps are 32,768 tokens for
+OpenAI and 8,192 for compatible chat endpoints.
+
+## Convenience scripts
+
+These launch the same workflow with the bundled Transformer inputs:
+
+| Script | Input | Provider |
+| --- | --- | --- |
+| `bash scripts/run.sh` | JSON | OpenAI |
+| `bash scripts/run_latex.sh` | LaTeX | OpenAI |
+| `bash scripts/run_llm.sh` | JSON | Compatible chat endpoint |
+| `bash scripts/run_latex_llm.sh` | LaTeX | Compatible chat endpoint |
+
+Override `PAPER_PATH`, `MODEL_NAME`, `OUTPUT_DIR`, `OUTPUT_REPO_DIR`, or `PYTHON`
+through environment variables. The local-model scripts also accept `API_BASE`
+(default: `http://localhost:8000/v1`). Append CLI flags to override other defaults.
+The scripts change into the repository root before resolving input and output
+paths; invoke the script by its full path when working elsewhere.
+
+## Python API
+
+Set the process-wide template root once at application startup and inject a
+Slick provider. Use one `PaperCoder` instance per run.
 
 ```python
 import asyncio
 from pathlib import Path
+
 from slick import prompts
 from slick.providers import OpenAIAPI
+
 from codes import workflow
 
 prompts.TEMPLATE_ROOT = Path(workflow.__file__).resolve().parent / "prompts"
 paper, paper_format = workflow.load_paper(Path("examples/Transformer.json"))
 coder = workflow.PaperCoder(
-    paper, paper_format, OpenAIAPI("o3-mini", max_output_tokens=32768, timeout=600),
-    Path("outputs/Transformer"), Path("outputs/Transformer_repo"),
+    paper,
+    paper_format,
+    OpenAIAPI("o3-mini", max_output_tokens=32768, timeout=600),
+    Path("outputs/Transformer"),
+    Path("outputs/Transformer_repo"),
 )
 asyncio.run(coder.run())
 ```
 
-The offline tests use a scripted provider and never call a model:
+## Development
+
+| Path | Purpose |
+| --- | --- |
+| [`codes/workflow.py`](codes/workflow.py) | Prompt methods, orchestration, file writing, CLI |
+| [`codes/paper.py`](codes/paper.py) | JSON cleanup and paper loading |
+| [`codes/prompts/`](codes/prompts/) | Overview, design, tasks, config, analysis, and coding templates |
+| [`tests/`](tests/) | Offline checks with a scripted provider |
+| [`data/`](data/) and [`examples/`](examples/) | Paper data and reference repositories |
+
+Run the offline tests without API credentials or a GPU:
 
 ```bash
 pip install pytest
 python -m pytest
 ```
 
-### 📄 (Option) Convert PDF to JSON
-The following process describes how to convert a paper PDF into JSON format.  
-If you have access to the LaTeX source and plan to use it with PaperCoder, you may skip this step and proceed to [⚡ Quick Start](#-quick-start).
-Note: In our experiments, we converted all paper PDFs to JSON format.
-
-1. Clone the `s2orc-doc2json` repository to convert your PDF file into a structured JSON format.  
-   (For detailed configuration, please refer to the [official repository](https://github.com/allenai/s2orc-doc2json).)
+To rebuild the diagram, install a TeX distribution with TikZ and `pdftocairo`
+(Poppler), then run from the repository root:
 
 ```bash
-git clone https://github.com/allenai/s2orc-doc2json.git
+mkdir -p /tmp/metapaper2code-diagram
+pdflatex -interaction=nonstopmode -halt-on-error \
+    -output-directory=/tmp/metapaper2code-diagram assets/workflow.tex
+pdftocairo -svg /tmp/metapaper2code-diagram/workflow.pdf assets/workflow.svg
 ```
 
-2. Run the PDF processing service.
+Commit both the `.tex` source and the rendered `.svg`; GitHub displays the SVG.
 
-```bash
-cd ./s2orc-doc2json/grobid-0.7.3
-./gradlew run
-```
+## Origin and scope
 
-3. Convert your PDF into JSON format.
+Based on *Paper2Code: Automating Code Generation from Scientific Papers in
+Machine Learning* by Minju Seo, Jinheon Baek, Seongyun Lee, and Sung Ju Hwang.
+See the [paper](https://arxiv.org/abs/2504.17192),
+[upstream repository](https://github.com/going-doer/Paper2Code), and
+[benchmark data](data/paper2code/README.md).
 
-```bash
-mkdir -p ./s2orc-doc2json/output_dir/paper_coder
-python ./s2orc-doc2json/doc2json/grobid2json/process_pdf.py \
-    -i ${PDF_PATH} \
-    -t ./s2orc-doc2json/temp_dir/ \
-    -o ./s2orc-doc2json/output_dir/paper_coder
-```
-
----
-
-## 📦 Paper2Code Benchmark Datasets
-- Huggingface dataset: [paper2code](https://huggingface.co/datasets/iaminju/paper2code)
-  
-- You can find the description of the Paper2Code benchmark dataset in [data/paper2code](https://github.com/going-doer/Paper2Code/tree/main/data/paper2code). 
-- For more details, refer to Section 4.1 "Paper2Code Benchmark" in the [paper](https://arxiv.org/abs/2504.17192).
+This fork combines the original system and user instructions into Slick prompt
+context and changes provider settings. The original paper's benchmark results
+have not been revalidated for this implementation. The numbered pipeline,
+standalone evaluator, configuration-refinement tool, and debugger are removed.
