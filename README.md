@@ -17,74 +17,133 @@ Our method outperforms strong baselines on both Paper2Code and PaperBench and pr
 - [⚡ Quick Start](#-quick-start)
 - [📚 Detailed Setup Instructions](#-detailed-setup-instructions)
 - [📦 Paper2Code Benchmark Datasets](#-paper2code-benchmark-datasets)
-- [📊 Model-based Evaluation of Repositories](#-model-based-evaluation-of-repositories-generated-by-papercoder)
 
 ---
 
 ## ⚡ Quick Start
-- Note: The following command runs example paper ([Attention Is All You Need](https://arxiv.org/abs/1706.03762)).  
-- For more setup options, including LaTeX-based inputs and PDF-to-JSON conversion, see [📚 Detailed Setup Instructions](#-detailed-setup-instructions).
 
-### Using OpenAI API
-- 💵 Estimated cost for using o3-mini: $0.50–$0.70
+PaperCoder runs as one Slick workflow: four planning calls share a session,
+then every file is analyzed independently and implemented in dependency order.
+The six prompt templates live in `codes/prompts/`; the original prompt wording
+and tagged response formats are retained. Each template combines the former
+system and user instructions into Slick's user context, so this is not an exact
+reproduction of the original message roles or model settings.
+
+Install Python 3.10+ and the adjacent Slick checkout:
 
 ```bash
-pip install openai
-
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt  # expects ../slick
 export OPENAI_API_KEY="<OPENAI_API_KEY>"
 
-cd scripts
-bash run.sh
+python -m codes.workflow examples/Transformer.json \
+    --model o3-mini \
+    --output-dir outputs/Transformer \
+    --output-repo-dir outputs/Transformer_repo
 ```
 
-### Using Open Source Models with vLLM
-- If you encounter any issues installing vLLM, please refer to the [official vLLM repository](https://github.com/vllm-project/vllm).
-- The default model is `deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct`.
+JSON extraction metadata is cleaned automatically. To use LaTeX, pass
+`examples/Transformer_cleaned.tex` instead. Convenience commands also
+work from any directory:
 
 ```bash
-pip install vllm
-
-cd scripts
-bash run_llm.sh
+bash scripts/run.sh
+bash scripts/run_latex.sh
 ```
 
-### Output Folder Structure (Only Important Files)
-```bash
-outputs
-├── Transformer
-│   ├── analyzing_artifacts
-│   ├── coding_artifacts
-│   └── planning_artifacts
-└── Transformer_repo # Final output repository
+The scripts accept `PAPER_PATH`, `MODEL_NAME`, `OUTPUT_DIR`, `OUTPUT_REPO_DIR`,
+and `PYTHON` environment overrides. Relative paths are resolved from this repository.
+Additional CLI flags can be appended to the script command.
+
+```text
+outputs/
+├── Transformer/
+│   ├── planning/       # overview, design, tasks, and config
+│   ├── analysis/       # per-file logic analysis
+│   └── calls/          # raw Slick session histories
+└── Transformer_repo/
+    ├── config.yaml
+    └── ...generated files
 ```
----
+
+The workflow writes files but does not execute generated code. Existing files
+with the same names are overwritten; use a new output directory for a separate
+run. Generated paths cannot traverse outside the output directories or use
+hidden paths or symlinks below them. Calls are sequential with no automatic
+retries. Raw Slick session histories are saved after each call, including
+responses rejected during parsing; model call failures also write `failure.json`.
+Planning JSON must be valid; malformed model output is rejected without repair.
+A failed run leaves partial artifacts and files. Rerunning starts from planning;
+`@workflow` alone does not enable persistent resume.
+
+`calls/planning.json` contains the four planning exchanges;
+`calls/analysis/<filename>.json` and `calls/coding/<filename>.json` contain
+independent file exchanges. Each record uses Slick's session-history format,
+including `context`, `text`, and tool work. There are no OpenAI response envelopes
+or token/cost reports. OpenAI uses Slick's Responses provider with a 32,768-token
+output cap and its default reasoning setting; compatible chat endpoints use an
+8,192-token cap.
+
+The numbered pipeline scripts and standalone evaluation, configuration-refinement,
+and debugging commands have been removed. Use `python -m codes.workflow` or the
+shell launchers above. Paper data and reference repositories remain in `data/`
+and `examples/`.
 
 ## 📚 Detailed Setup Instructions
 
-### 🛠️ Environment Setup
+### Open-source models with vLLM
 
-- 💡 To use the `o3-mini` version, make sure you have the latest `openai` package installed.
-- We recommend using a Python virtual environment before installing dependencies.
-- 📦 Install only what you need:
-  - For OpenAI API, install `openai`.
-  - For open-source models, install `vllm`.
-  - If you encounter any issues installing vLLM, please refer to the [official vLLM repository](https://github.com/vllm-project/vllm).
-
+Start an OpenAI-compatible vLLM server in your GPU environment:
 
 ```bash
-pip install openai 
-pip install vllm 
+pip install vllm
+vllm serve deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct --tensor-parallel-size 2
 ```
 
-- Or, if you prefer, you can install all dependencies using `pip`:
+In the workflow environment, install Slick's chat provider extra and run:
 
 ```bash
-pip install -r requirements.txt
+pip install -e '../slick[litellm]'
+export OPENAI_API_KEY="local"  # use your server's key if authentication is enabled
+bash scripts/run_llm.sh
+# Or: bash scripts/run_latex_llm.sh
+```
+
+Set `API_BASE` to change the default `http://localhost:8000/v1`, or pass
+`--api-base` and `--model` directly to `python -m codes.workflow`.
+
+### Python API and tests
+
+Configure the template root once at application startup, then inject a Slick
+provider. The root is process-global.
+
+```python
+import asyncio
+from pathlib import Path
+from slick import prompts
+from slick.providers import OpenAIAPI
+from codes import workflow
+
+prompts.TEMPLATE_ROOT = Path(workflow.__file__).resolve().parent / "prompts"
+paper, paper_format = workflow.load_paper(Path("examples/Transformer.json"))
+coder = workflow.PaperCoder(
+    paper, paper_format, OpenAIAPI("o3-mini", max_output_tokens=32768, timeout=600),
+    Path("outputs/Transformer"), Path("outputs/Transformer_repo"),
+)
+asyncio.run(coder.run())
+```
+
+The offline tests use a scripted provider and never call a model:
+
+```bash
+pip install pytest
+python -m pytest
 ```
 
 ### 📄 (Option) Convert PDF to JSON
 The following process describes how to convert a paper PDF into JSON format.  
-If you have access to the LaTeX source and plan to use it with PaperCoder, you may skip this step and proceed to [🚀 Running PaperCoder](#-running-papercoder).  
+If you have access to the LaTeX source and plan to use it with PaperCoder, you may skip this step and proceed to [⚡ Quick Start](#-quick-start).
 Note: In our experiments, we converted all paper PDFs to JSON format.
 
 1. Clone the `s2orc-doc2json` repository to convert your PDF file into a structured JSON format.  
@@ -111,46 +170,6 @@ python ./s2orc-doc2json/doc2json/grobid2json/process_pdf.py \
     -o ./s2orc-doc2json/output_dir/paper_coder
 ```
 
-### 🚀 Running PaperCoder
-- Note: The following command runs example paper ([Attention Is All You Need](https://arxiv.org/abs/1706.03762)).  
-  If you want to run PaperCoder on your own paper, please modify the environment variables accordingly.
-
-#### Using OpenAI API
-- 💵 Estimated cost for using o3-mini: $0.50–$0.70
-
-
-```bash
-# Using the PDF-based JSON format of the paper
-export OPENAI_API_KEY="<OPENAI_API_KEY>"
-
-cd scripts
-bash run.sh
-```
-
-```bash
-# Using the LaTeX source of the paper
-export OPENAI_API_KEY="<OPENAI_API_KEY>"
-
-cd scripts
-bash run_latex.sh
-```
-
-
-#### Using Open Source Models with vLLM
-- The default model is `deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct`.
-
-```bash
-# Using the PDF-based JSON format of the paper
-cd scripts
-bash run_llm.sh
-```
-
-```bash
-# Using the LaTeX source of the paper
-cd scripts
-bash run_latex_llm.sh
-```
-
 ---
 
 ## 📦 Paper2Code Benchmark Datasets
@@ -158,81 +177,3 @@ bash run_latex_llm.sh
   
 - You can find the description of the Paper2Code benchmark dataset in [data/paper2code](https://github.com/going-doer/Paper2Code/tree/main/data/paper2code). 
 - For more details, refer to Section 4.1 "Paper2Code Benchmark" in the [paper](https://arxiv.org/abs/2504.17192).
-
-
----
-
-## 📊 Model-based Evaluation of Repositories Generated by PaperCoder
-
-- We evaluate repository quality using a model-based approach, supporting both reference-based and reference-free settings.  
-  The model critiques key implementation components, assigns severity levels, and generates a 1–5 correctness score averaged over 8 samples using **o3-mini-high**.
-
-- For more details, please refer to Section 4.3.1 (*Paper2Code Benchmark*) of the paper.
-- **Note:** The following examples evaluate the sample repository (**Transformer_repo**).  
-  Please modify the relevant paths and arguments if you wish to evaluate a different repository.
-
-### 🛠️ Environment Setup
-```bash
-pip install tiktoken
-export OPENAI_API_KEY="<OPENAI_API_KEY>"
-```
-
-
-### 📝 Reference-free Evaluation
-- `target_repo_dir` is the generated repository.
-
-```bash
-cd codes/
-python eval.py \
-    --paper_name Transformer \
-    --pdf_json_path ../examples/Transformer_cleaned.json \
-    --data_dir ../data \
-    --output_dir ../outputs/Transformer \
-    --target_repo_dir ../outputs/Transformer_repo \
-    --eval_result_dir ../results \
-    --eval_type ref_free \
-    --generated_n 8 \
-    --papercoder
-```
-
-### 📝 Reference-based Evaluation
-- `target_repo_dir` is the generated repository.
-- `gold_repo_dir` should point to the official repository (e.g., author-released code).
-
-```bash
-cd codes/
-python eval.py \
-    --paper_name Transformer \
-    --pdf_json_path ../examples/Transformer_cleaned.json \
-    --data_dir ../data \
-    --output_dir ../outputs/Transformer \
-    --target_repo_dir ../outputs/Transformer_repo \
-    --gold_repo_dir ../examples/Transformer_gold_repo \
-    --eval_result_dir ../results \
-    --eval_type ref_based \
-    --generated_n 8 \
-    --papercoder
-```
-
-
-### 📄 Example Output
-```bash
-========================================
-🌟 Evaluation Summary 🌟
-📄 Paper name: Transformer
-🧪 Evaluation type: ref_based
-📁 Target repo directory: ../outputs/Transformer_repo
-📊 Evaluation result:
-        📈 Score: 4.5000
-        ✅ Valid: 8/8
-========================================
-🌟 Usage Summary 🌟
-[Evaluation] Transformer - ref_based
-🛠️ Model: o3-mini
-📥 Input tokens: 44318 (Cost: $0.04874980)
-📦 Cached input tokens: 0 (Cost: $0.00000000)
-📤 Output tokens: 26310 (Cost: $0.11576400)
-💵 Current total cost: $0.16451380
-🪙 Accumulated total cost so far: $0.16451380
-============================================
-```
