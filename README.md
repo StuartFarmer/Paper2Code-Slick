@@ -15,22 +15,17 @@ and provider-specific implementations with Slick sessions and providers.
 
 ## Run it
 
-Use Python 3.10+ and keep the Slick checkout beside this repository:
+Use Python 3.10+ and install Slick from PyPI in the Python environment you want
+to use:
 
-```text
-AI/
-├── slick/
-└── Paper2Code-Slick/
+```bash
+pip install slick-ai
 ```
 
 Install and authenticate the `codex` CLI first; this workflow uses its configured
 model and credentials. From this repository's root:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
 python -m codes.workflow examples/Transformer.json \
     --model codex \
     --output-dir outputs/Transformer \
@@ -115,11 +110,20 @@ python -m codes.workflow examples/Transformer.json --model codex
 
 # Claude Code CLI
 python -m codes.workflow examples/Transformer.json --model claude
+```
 
-# OpenRouter: supply a model ID from your OpenRouter account
+For OpenRouter, install Slick's optional OpenAI SDK dependency and export your
+OpenRouter key in the same shell before running the workflow:
+
+```bash
+pip install "slick-ai[openai]"
 export OPENROUTER_API_KEY="<your-openrouter-key>"
 python -m codes.workflow examples/Transformer.json --model anthropic/claude-sonnet-4.5
 ```
+
+`pip install -r requirements.txt` also installs Slick with OpenRouter support
+from PyPI. No Slick source checkout is needed. The key is read from
+`OPENROUTER_API_KEY`; Codex and Claude CLI runs use their own authentication.
 
 The aliases `codex` and `claude` choose a CLI, not a model sent to that CLI.
 Configure the underlying model in the CLI itself. Other values must contain a

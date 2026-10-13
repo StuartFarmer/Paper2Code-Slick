@@ -1,1 +1,1 @@
--e ../slick[openai]
+slick-ai[openai]>=0.4.0
