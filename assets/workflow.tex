@@ -2,37 +2,23 @@
 \usepackage[T1]{fontenc}
 \usepackage{lmodern}
 \renewcommand{\familydefault}{\sfdefault}
-\usetikzlibrary{arrows.meta,positioning,backgrounds}
+\usetikzlibrary{arrows.meta,backgrounds}
 \definecolor{ink}{HTML}{16283D}
-\definecolor{bluewash}{HTML}{EEF5FF}
-\definecolor{tealwash}{HTML}{EDF9F6}
-\definecolor{violetwash}{HTML}{F5F1FC}
 \begin{document}
-\begin{tikzpicture}[
- font=\sffamily\color{ink}, >={Latex[length=2.4mm]},
- box/.style={draw=ink!30,rounded corners=5pt,align=center,text width=4.3cm,minimum height=1.15cm,fill=white},
+\begin{tikzpicture}[font=\sffamily\color{ink}, >={Latex[length=2.4mm]},
+ box/.style={draw=ink!30,rounded corners=5pt,align=center,text width=4.1cm,minimum height=1.5cm,fill=blue!4},
  flow/.style={->,draw=ink,line width=.9pt},
- note/.style={font=\small,align=center,text=ink!75},
  background rectangle/.style={fill=white},show background rectangle]
-\node[font=\Large\bfseries] at (5,1.5) {Paper to verified repository};
-\node[note] at (5,.95) {One Slick workflow / fresh contexts / bounded budgets};
-\node[box,fill=bluewash] (source) at (0,-.4) {\textbf{1. Index source}\\JSON, Markdown, LaTeX\\Exact quotes and spans};
-\node[box,fill=bluewash] (plan) at (5,-.4) {\textbf{2. Typed plan}\\Requirements, interfaces\\Owned tasks and dependencies};
-\node[box,fill=bluewash] (tests) at (10,-.4) {\textbf{3. Independent tests}\\Source-grounded properties\\Review and freeze suite};
-\draw[flow] (source)--(plan); \draw[flow] (plan)--(tests);
-\node[box,fill=tealwash] (a) at (0,-3) {\textbf{Ready task A}\\Generate $\to$ Docker checks\\Fresh review $\to$ accept};
-\node[box,fill=tealwash] (b) at (5,-3) {\textbf{Ready task B}\\Generate $\to$ Docker checks\\Fresh review $\to$ accept};
-\node[box,fill=violetwash] (fix) at (10,-3) {\textbf{Bounded repair}\\Diagnose measured failure\\Fix owned code; recheck};
-\draw[flow] (tests.south)--(10,-1.7)--(0,-1.7)--(a.north);
-\draw[flow] (5,-1.7)--(b.north);
-\draw[flow] (b)--node[above,font=\small]{fail}(fix);
-\draw[flow] (fix.south)--(10,-4.1)--(5,-4.1)--(b.south);
-\node[note,font=\footnotesize,text width=4.7cm] at (0,-4.2) {Dependencies gate dispatch\\4 model calls / 2 Docker checks};
-\node[box,fill=violetwash] (integrate) at (2.5,-6.0) {\textbf{4. Integrate and verify}\\Complete suite + smoke\\Final source-fidelity review};
-\node[box,fill=violetwash,text width=5cm] (export) at (8,-6.0) {\textbf{5. Export accepted work}\\Code, tests and evidence\\No export on failure};
-\draw[flow] (a.west)--(-2.8,-3)--(-2.8,-6)--(integrate.west);
-\draw[flow] (b.south)--(5,-4.65)--(integrate.north);
-\draw[flow] (integrate)--(export);
-\node[note,text width=14cm] at (5,-7.55) {Every call and check leaves durable evidence; resume reuses matching accepted work.\\Synthetic tests establish bounded behavior, not published-result reproduction.};
+\node[font=\Large\bfseries] at (5,2.2) {Generate first, then verify and improve};
+\node[align=center,text=ink!75] at (5,1.5) {One Slick workflow / fresh contexts / bounded budgets};
+\node[box] (source) at (0,0) {\textbf{1. Index source}\\JSON, Markdown, LaTeX\\Quotes and source spans};
+\node[box] (plan) at (5,0) {\textbf{2. Plan}\\Requirements and APIs\\Review issues become warnings};
+\node[box,fill=green!5] (draft) at (10,0) {\textbf{3. Generate drafts}\\Parallel ready tasks\\Build on upstream drafts};
+\node[box] (tests) at (10,-3.1) {\textbf{4. Independent tests}\\Author cannot see code\\Freeze usable tests};
+\node[box,fill=violet!5] (verify) at (5,-3.1) {\textbf{5. Check and improve}\\Docker checks and fresh reviews\\Up to two code repairs};
+\node[box,fill=green!5] (export) at (0,-3.1) {\textbf{6. Export code}\\Verified or explicitly draft\\Report failures and missing checks};
+\draw[flow] (source)--(plan); \draw[flow] (plan)--(draft);
+\draw[flow] (draft)--(tests); \draw[flow] (tests)--(verify); \draw[flow] (verify)--(export);
+\node[align=center,text width=14cm,text=ink!75] at (5,-5) {Verification failure does not discard generated code.\\Unsafe paths and ownership conflicts are still rejected; all execution stays in Docker.};
 \end{tikzpicture}
 \end{document}

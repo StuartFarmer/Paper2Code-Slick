@@ -47,3 +47,24 @@ def test_calibration_does_not_count_setup_errors_as_rejected_faults(tmp_path):
     assert result["faults_rejected"] == 2
     assert result["inconclusive"] == 1
     assert result["pairs"] == 3
+
+
+def test_micro_stage_uses_external_checks_to_assess_a_draft(tmp_path, monkeypatch):
+    def draft_run(argv):
+        root = Path(argv[argv.index("--output-dir") + 1])
+        root.mkdir()
+        repo = Path(argv[argv.index("--output-repo-dir") + 1])
+        repo.mkdir()
+        (repo / "method.py").write_text("draft")
+        (root / "report.json").write_text(
+            json.dumps({"outcome": "draft", "calls_reserved": 10, "measured_cost": None})
+        )
+        return 0
+
+    monkeypatch.setattr("codes.execution.run_check", ScriptedExecutor())
+    result = evaluate(
+        "micro", tmp_path / "trial", image=("sha256:test", "linux/arm64"), workflow=draft_run
+    )
+    assert result["outcome"] == "complete"
+    assert result["workflow_outcome"] == "draft"
+    assert result["external_check"]["status"] == "passed"

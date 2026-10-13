@@ -29,3 +29,8 @@ is no external paper-specific empirical oracle yet; promotion is procedural evid
 not published-result reproduction. A genuine small/large × old/new comparison needs
 repeated trials, fixed external checks and independently adjudicated outcomes. No
 stronger model is selected automatically. GEPA belongs to V2.
+
+Generation now runs before verification. A complete draft is returned even if model
+reviews disagree or generated test preparation fails. The micro evaluator judges
+that draft using its frozen external checks; `workflow_outcome` preserves the
+pipeline's own status separately from the micro evaluation outcome.

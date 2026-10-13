@@ -102,7 +102,7 @@ def test_vacuous_suite_cannot_freeze_even_if_reviewer_would_pass(tmp_path, monke
     spec, plan = spec_plan()
     plan.tasks = plan.tasks[:1]
     with RunStore.create(tmp_path / "run", settings) as store:
-        provider = ScriptedProvider(responses[4:8])
+        provider = ScriptedProvider(responses[5:9])
         coder = PaperCoder(store, provider, executor=ScriptedExecutor(["passed", "passed"]))
         with pytest.raises(ValueError, match="scaffold"):
             asyncio.run(coder.prepare_acceptance(spec, plan, index_paper(paper)))

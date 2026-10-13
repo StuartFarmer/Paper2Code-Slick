@@ -75,9 +75,9 @@ class PaperCoder:
     async def run(self, index: PaperIndex) -> Path | None:
         self.snapshot_source(index)
         spec, plan = await self.prepare_plan(index)
-        suite = await self.prepare_acceptance(spec, plan, index)
-        self.configure_run(index, spec, plan, suite)
+        self.configure_run(index, spec, plan, None)
         await self.execute_plan()
+        await self.verify_draft(spec, plan, index)
         return await self.finish()
 
     def snapshot_source(self, index: PaperIndex) -> None:
@@ -104,13 +104,94 @@ class PaperCoder:
                 ),
             )
 
+    def warn(self, message: str) -> None:
+        if message not in self.store.manifest.warnings:
+            self.store.manifest.warnings.append(message)
+            self.store.save_manifest()
+            print(f"Warning: {message}", flush=True)
+
+    async def verify_draft(self, spec: PaperSpec, plan: TaskPlan, index: PaperIndex) -> None:
+        if not all(r.candidate_artifact for r in self.records.values()):
+            return
+        try:
+            suite = await self.prepare_acceptance(spec, plan, index)
+        except ValueError as error:
+            self.warn(f"Acceptance preparation unavailable: {error}")
+            return
+        self.configure_run(index, spec, plan, suite)
+        for record in self.records.values():
+            if record.state == "draft":
+                record.state = "pending"
+                self.store.save_task(record)
+        await self.execute_plan()
+
     async def finish(self) -> Path | None:
-        if not all(r.state == "accepted" for r in self.records.values()):
-            self.write_report("incomplete", "One or more tasks are blocked")
-            return None
-        output = await self.integrate_and_export()
-        self.write_report("complete")
+        if self.suite is not None and all(self.accepted(t) for t in self.plan.tasks):
+            try:
+                output = await self.integrate_and_export()
+                self.write_report("draft" if self.store.manifest.warnings else "complete")
+                return output
+            except ValueError as error:
+                self.warn(f"Integration verification incomplete: {error}")
+        output = self.export_draft()
+        complete = all(r.candidate_artifact for r in self.records.values())
+        self.write_report(
+            "draft" if complete else "incomplete",
+            "See warnings and task evidence for unfinished checks",
+        )
         return output
+
+    def export_draft(self) -> Path | None:
+        if not hasattr(self, "records"):
+            return None
+        files = {}
+        for task in self.plan.tasks:
+            record = self.records[task.id]
+            if not record.candidate_artifact:
+                continue
+            candidate = Candidate.model_validate_json(
+                self.store.read_artifact(record.candidate_artifact)
+            )
+            if {f.path for f in candidate.files} != set(task.owned_paths):
+                raise ValueError("Draft candidate escaped file ownership")
+            files.update({f.path: f.content for f in candidate.files})
+        if not files:
+            return None
+        return self.export_files(files, verified=False)
+
+    def export_files(self, files: dict[str, str], *, verified: bool) -> Path:
+        snapshot = self.store.root / (
+            "accepted"
+            if verified
+            else "drafts/" + digest(json.dumps(files, sort_keys=True).encode())
+        )
+        export_hash = materialize_snapshot(snapshot, files)
+        destination = Path(self.store.manifest.export_path or self.store.manifest.output_repo)
+        if destination.exists():
+            actual = tree_hash(destination)
+            if actual != export_hash:
+                if not self.store.manifest.export_path:
+                    raise FileExistsError(f"Export has existing files: {destination}")
+                # Preserve the previous draft and any user edits; publish revisions separately.
+                destination = self.store.root / "exports" / export_hash
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = Path(tempfile.mkdtemp(prefix=".paper2code-export-", dir=destination.parent))
+        try:
+            shutil.copytree(snapshot, temporary, dirs_exist_ok=True)
+            if destination.exists():
+                if tree_hash(destination) != export_hash:
+                    raise FileExistsError(destination)
+            else:
+                os.rename(temporary, destination)
+            self.store.manifest.export_hash = export_hash
+            self.store.manifest.export_path = str(destination)
+            if verified:
+                self.store.manifest.accepted_hash = export_hash
+            self.store.save_manifest()
+        finally:
+            if temporary.exists():
+                shutil.rmtree(temporary)
+        return destination
 
     async def integrate_and_export(self) -> Path:
         files = {}
@@ -181,34 +262,10 @@ class PaperCoder:
                 validator=validate_review,
             )
             if review.verdict != "pass":
-                raise ValueError(
-                    f"Final fidelity review blocked group {number}: {review.model_dump_json()}"
-                )
+                self.warn(f"Fidelity review group {number}: {review.model_dump_json()}")
             number += 1
         files.update({f.path: f.content for f in self.suite.files})
-        accepted_root = self.store.root / "accepted"
-        accepted_hash = materialize_snapshot(accepted_root, files)
-        destination = Path(self.store.manifest.output_repo)
-        if destination.exists():
-            if (
-                self.store.manifest.accepted_hash != accepted_hash
-                or tree_hash(destination) != accepted_hash
-            ):
-                raise FileExistsError(f"Export path already exists: {destination}")
-            return destination
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        temporary = Path(tempfile.mkdtemp(prefix=".paper2code-export-", dir=destination.parent))
-        try:
-            shutil.copytree(accepted_root, temporary, dirs_exist_ok=True)
-            self.store.manifest.accepted_hash = accepted_hash
-            self.store.save_manifest()
-            if destination.exists():
-                raise FileExistsError(f"Export path already exists: {destination}")
-            os.rename(temporary, destination)
-        finally:
-            if temporary.exists():
-                shutil.rmtree(temporary)
-        return destination
+        return self.export_files(files, verified=not self.store.manifest.warnings)
 
     async def repair_integration(self, result: ExecutionResult, snapshot_id: str) -> bool:
         if result.status != "failed" or not result.failed_nodes:
@@ -269,9 +326,13 @@ class PaperCoder:
         records = getattr(self, "records", {})
         spec, suite = getattr(self, "spec", None), getattr(self, "suite", None)
         evidence = {}
-        if spec and suite:
+        if spec:
             for requirement in spec.requirements:
-                properties = [p for p in suite.properties if requirement.id in p.requirement_ids]
+                properties = (
+                    [p for p in suite.properties if requirement.id in p.requirement_ids]
+                    if suite
+                    else []
+                )
                 tasks = [t for t in self.plan.tasks if requirement.id in t.requirement_ids]
                 owners = [self.records[t.id] for t in tasks]
                 status = "unresolved"
@@ -297,8 +358,11 @@ class PaperCoder:
         self.store._charge_elapsed()
         report = RunReport(
             outcome=outcome,
-            generation_complete=complete,
+            generation_complete=bool(records)
+            and all(r.candidate_artifact for r in records.values()),
             tests_verified=complete,
+            warnings=self.store.manifest.warnings,
+            export_path=self.store.manifest.export_path,
             integration_verified=getattr(self, "integration_verified", False),
             requirements=evidence,
             deviations=spec.deviations if spec else [],
@@ -318,24 +382,28 @@ class PaperCoder:
             f"reports/{uuid.uuid4().hex}.json", report.model_dump_json(indent=2)
         )
         atomic_write(self.store.root / "report.json", report.model_dump_json(indent=2) + "\n")
+        warnings = "\n".join("- " + w for w in report.warnings)
         atomic_write(
             self.store.root / "report.md",
-            f"# Paper2Code run: {outcome}\n\nCalls: {report.calls_reserved}\n\nTests verified: {report.tests_verified}\n\nIntegration verified: {report.integration_verified}\n\n{error}\n\nPassing synthetic tests does not establish published-result reproduction. See report.json for claim-level evidence.\n",
+            f"# Paper2Code run: {outcome}\n\nExport: {report.export_path or 'none'}\n\nGeneration complete: {report.generation_complete}\n\nCalls: {report.calls_reserved}\n\nTests verified: {report.tests_verified}\n\nIntegration verified: {report.integration_verified}\n\n{error}\n\n{warnings}\n\nPassing synthetic tests does not establish published-result reproduction. See report.json for claim-level evidence.\n",
         )
         self.store.manifest.outcome = outcome
         self.store.save_manifest()
 
     def configure_run(
-        self, index: PaperIndex, spec: PaperSpec, plan: TaskPlan, suite: TestSuite
+        self, index: PaperIndex, spec: PaperSpec, plan: TaskPlan, suite: TestSuite | None
     ) -> None:
-        validate_plan(spec, plan)
-        validate_suite(spec, plan, suite)
+        validate_plan(spec, plan, allow_unresolved=True)
+        if suite is not None:
+            validate_suite(spec, plan, suite)
         self.index, self.spec, self.plan, self.suite = index, spec, plan, suite
         self.upstream = ancestors(plan)
         self.plan_hash = digest(plan.model_dump_json().encode())
-        self.suite_root = self.store.root / "snapshots" / "acceptance"
+        self.suite_root = (
+            self.store.root / "snapshots" / ("acceptance" if suite else "no-acceptance")
+        )
         self.suite_hash = materialize_snapshot(
-            self.suite_root, {f.path: f.content for f in suite.files}
+            self.suite_root, {f.path: f.content for f in suite.files} if suite else {}
         )
         self.records = {}
         for task in plan.tasks:
@@ -353,14 +421,14 @@ class PaperCoder:
         for task_id in self.upstream:
             task = by_id[task_id]
             record = self.records[task.id]
-            if record.state == "accepted" and not self.accepted(task):
+            if self.suite is not None and record.state == "accepted" and not self.accepted(task):
                 record.state = "pending"
                 record.blocker = "Accepted evidence invalidated"
                 self.store.save_task(record)
         while True:
             for task in self.plan.tasks:
                 record = self.records[task.id]
-                if record.state not in {"accepted", "blocked"} and any(
+                if record.state not in {"accepted", "draft", "blocked"} and any(
                     self.records[d].state == "blocked" for d in self.upstream[task.id]
                 ):
                     record.state, record.blocker = "blocked", "Required dependency is blocked"
@@ -368,8 +436,8 @@ class PaperCoder:
             ready = [
                 task
                 for task in self.plan.tasks
-                if self.records[task.id].state not in {"accepted", "blocked"}
-                and all(self.records[d].state == "accepted" for d in task.depends_on)
+                if self.records[task.id].state not in {"accepted", "draft", "blocked"}
+                and all(self.records[d].state in {"accepted", "draft"} for d in task.depends_on)
             ]
             if not ready:
                 return
@@ -386,8 +454,8 @@ class PaperCoder:
         versions, files = {}, {}
         for task_id in sorted(self.upstream[task.id]):
             record = self.records[task_id]
-            if record.state != "accepted":
-                raise ValueError(f"Dependency not accepted: {task_id}")
+            if record.state not in {"accepted", "draft"}:
+                raise ValueError(f"Dependency has no usable candidate: {task_id}")
             versions[task_id] = record.candidate_hash
             candidate = Candidate.model_validate_json(
                 self.store.read_artifact(record.candidate_artifact)
@@ -442,12 +510,23 @@ class PaperCoder:
 
     async def execute_task(self, task: TaskSpec) -> TaskRecord:
         record = self.records[task.id]
+        if self.suite is None and record.candidate_artifact:
+            if record.state != "accepted":
+                record.state = "draft"
+                self.store.save_task(record)
+            return record
         if self.accepted(task):
             return record
         try:
             versions, dependencies = self.dependencies(task)
             dependency_hash = digest(json.dumps(versions, sort_keys=True).encode())
             packet = build_packet(task, self.spec, self.index, dependencies, self.suite)
+            packet["planning_warnings"] = self.store.manifest.warnings
+            existing = (
+                Candidate.model_validate_json(self.store.read_artifact(record.candidate_artifact))
+                if record.candidate_artifact
+                else None
+            )
             operation = "implement_task"
             if record.diagnosis_artifact and record.candidate_artifact:
                 previous = Candidate.model_validate_json(
@@ -458,11 +537,13 @@ class PaperCoder:
                     diagnosis=json.loads(self.store.read_artifact(record.diagnosis_artifact)),
                 )
                 operation = "repair_task"
+                existing = None
             while True:
                 record.state = "implementing"
                 record.generations += 1
                 self.store.save_task(record)
-                reply = await self.invoke(operation, packet, task_id=task.id)
+                reply = existing or await self.invoke(operation, packet, task_id=task.id)
+                existing = None
                 if reply.kind == "blocked":
                     record.blocker = reply.reason
                     break
@@ -484,8 +565,12 @@ class PaperCoder:
                     candidate_hash,
                     candidate_artifact,
                 )
-                record.state = "checking"
+                record.dependencies = versions
+                record.diagnosis_artifact = ""
+                record.state = "draft" if self.suite is None else "checking"
                 self.store.save_task(record)
+                if self.suite is None:
+                    return record
                 python_files = [p for p in task.owned_paths if p.endswith(".py")]
                 modules = [
                     p.removesuffix(".py").replace("/", ".").removesuffix(".__init__")
@@ -548,7 +633,13 @@ class PaperCoder:
                         self.store.manifest.image_id,
                     )
                     record.check_artifacts, record.review_artifacts = artifacts, [review_artifact]
-                    record.state, record.blocker = "accepted", ""
+                    verified_dependencies = all(
+                        self.records[d].state == "accepted" for d in self.upstream[task.id]
+                    )
+                    record.state = "accepted" if verified_dependencies else "draft"
+                    record.blocker = (
+                        "" if verified_dependencies else "Dependency checks are incomplete"
+                    )
                     record.diagnosis_artifact = ""
                     self.store.save_task(record)
                     return record
@@ -558,7 +649,7 @@ class PaperCoder:
                 diagnosis = await self.invoke(
                     "diagnose", {**review_packet, "review": review.model_dump()}, task_id=task.id
                 )
-                record.diagnosis_artifact = self.store.save_artifact(
+                diagnosis_artifact = self.store.save_artifact(
                     f"{prefix}/diagnosis.json", diagnosis.model_dump_json(indent=2)
                 )
                 if diagnosis.category != "implementation" or set(diagnosis.affected_paths) - set(
@@ -569,6 +660,7 @@ class PaperCoder:
                     )
                     break
                 record.fixes += 1
+                record.diagnosis_artifact = diagnosis_artifact
                 record.state = "repairing"
                 self.store.save_task(record)
                 packet = {
@@ -585,7 +677,8 @@ class PaperCoder:
             record.state = "cancelled"
             self.store.save_task(record)
             raise
-        record.state = "blocked"
+        record.diagnosis_artifact = ""
+        record.state = "draft" if record.candidate_artifact else "blocked"
         self.store.save_task(record)
         return record
 
@@ -787,7 +880,7 @@ class PaperCoder:
         if "plan.json" in self.store.artifacts:
             spec = PaperSpec.model_validate_json(self.store.read_artifact("spec.json"))
             plan = TaskPlan.model_validate_json(self.store.read_artifact("plan.json"))
-            validate_plan(spec, plan)
+            validate_plan(spec, plan, allow_unresolved=True)
             return spec, plan
         calls = [
             self.cached(
@@ -814,8 +907,8 @@ class PaperCoder:
         )
         self.store.save_artifact("source/unresolved.json", json.dumps(self.unresolved_references))
         if unresolved:
-            raise ValueError(
-                "Unresolved extracted references require consolidated source or explicit clarification: "
+            self.warn(
+                "Unresolved extracted references; generate a best-effort draft with explicit assumptions: "
                 + "; ".join(unresolved)
             )
         requirements, interfaces, invariants, deviations, tasks, criteria = {}, {}, [], [], [], []
@@ -829,6 +922,7 @@ class PaperCoder:
                 "id_prefix": f"g{number}",
                 "sources": [asdict(e) for e in index.excerpts if e.source_id in source_ids],
                 "interface_registry": [i.model_dump() for i in interfaces.values()],
+                "unresolved_references": self.unresolved_references,
             }
 
         async for packet in self.bounded_packets("reconcile_spec", extracted, planning_packet):
@@ -857,11 +951,14 @@ class PaperCoder:
                 validator=validate_review,
             )
             if review.verdict != "pass":
-                raise ValueError(
-                    f"Specification review blocked group {number}: {review.model_dump_json()}"
-                )
+                self.warn(f"Specification review group {number}: {review.model_dump_json()}")
             if requirements.keys() & {r.id for r in fragment.requirements}:
                 raise ValueError("Duplicate requirement IDs across extraction groups")
+            for requirement in fragment.requirements:
+                if requirement.basis == "unresolved":
+                    self.warn(
+                        f"Requirement {requirement.id} needs an explicit implementation assumption: {requirement.rationale}"
+                    )
             requirements.update({r.id: r for r in fragment.requirements})
             interfaces.update({i.id: i for i in fragment.interfaces})
             invariants.extend(fragment.global_invariants)
@@ -870,6 +967,7 @@ class PaperCoder:
                 "plan_tasks",
                 {
                     "spec": fragment.model_dump(),
+                    "review": review.model_dump(),
                     "id_prefix": f"g{number}",
                     "existing_owners": [
                         {"id": t.id, "produces": t.produces, "owned_paths": t.owned_paths}
@@ -893,7 +991,7 @@ class PaperCoder:
             deviations=list(dict.fromkeys(deviations)),
         )
         plan = TaskPlan(tasks=tasks, integration_criteria=list(dict.fromkeys(criteria)))
-        validate_plan(spec, plan)
+        validate_plan(spec, plan, allow_unresolved=True)
         self.store.save_artifact("spec.json", spec.model_dump_json(indent=2))
         self.store.save_artifact("plan.json", plan.model_dump_json(indent=2))
         self.store.manifest.plan_hash = digest(plan.model_dump_json().encode())
@@ -1036,14 +1134,26 @@ class PaperCoder:
 
 async def run_verified(coder: PaperCoder, index: PaperIndex) -> Path | None:
     """Persist outcomes around Slick's restricted workflow syntax."""
+
+    def preserve(outcome: str, error: str) -> Path | None:
+        output = None
+        try:
+            output = coder.export_draft()
+        except (OSError, ValueError) as export_error:
+            coder.warn(f"Draft export failed: {export_error}")
+        finally:
+            coder.write_report(outcome, error)
+        return output
+
     try:
         return await coder.run(index)
     except BudgetExceeded as error:
-        coder.write_report("incomplete", str(error))
-        return None
+        return preserve("incomplete", str(error))
     except asyncio.CancelledError:
-        coder.write_report("cancelled", "Run cancelled")
+        preserve("cancelled", "Run cancelled")
         raise
     except Exception as error:
-        coder.write_report("failed", f"{type(error).__name__}: {error}")
+        output = preserve("failed", f"{type(error).__name__}: {error}")
+        if output is not None:
+            return output
         raise

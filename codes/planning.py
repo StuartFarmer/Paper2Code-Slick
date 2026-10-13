@@ -50,7 +50,7 @@ def ancestors(plan: TaskPlan) -> dict[str, set[str]]:
         raise ValueError("Task dependency cycle") from error
 
 
-def validate_plan(spec: PaperSpec, plan: TaskPlan) -> None:
+def validate_plan(spec: PaperSpec, plan: TaskPlan, *, allow_unresolved: bool = False) -> None:
     requirements = unique(spec.requirements, "requirement")
     interfaces = unique(spec.interfaces, "interface")
     upstream = ancestors(plan)
@@ -77,7 +77,9 @@ def validate_plan(spec: PaperSpec, plan: TaskPlan) -> None:
             raise ValueError("Task IDs must not contain directories")
         if set(task.requirement_ids) - requirements.keys():
             raise ValueError(f"Unknown requirement in {task.id}")
-        if any(requirements[r].basis == "unresolved" for r in task.requirement_ids):
+        if not allow_unresolved and any(
+            requirements[r].basis == "unresolved" for r in task.requirement_ids
+        ):
             raise ValueError(f"Unresolved requirement in {task.id}")
         covered.update(task.requirement_ids)
         for name in task.owned_paths:

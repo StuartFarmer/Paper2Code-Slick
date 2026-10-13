@@ -190,3 +190,12 @@ def test_required_empirical_claim_cannot_pass_synthetic_gate():
     spec.requirements[0].claim_kind = "empirical"
     with pytest.raises(ValueError, match="empirical"):
         validate_plan(spec, plan)
+
+
+def test_interface_accepts_module_file_spelling_from_model():
+    from codes.contracts import Interface
+
+    spec, _ = spec_plan()
+    record = spec.interfaces[0].model_dump()
+    record["module"] = "pkg/location.py"
+    assert Interface.model_validate(record).module == "pkg.location"

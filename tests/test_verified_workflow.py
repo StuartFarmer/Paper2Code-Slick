@@ -40,11 +40,11 @@ def case(tmp_path):
         spec.model_dump_json(),
         PASS,
         plan.model_dump_json(),
+        candidate(),
         suite.model_dump_json(),
         PASS,
         integration.model_dump_json(),
         PASS,
-        candidate(),
         PASS,
         PASS,
     ]
@@ -75,7 +75,7 @@ def test_complete_verified_flow_and_no_call_resume(tmp_path, monkeypatch):
         assert resumed.contexts == []
 
 
-def test_exhausted_budget_does_not_export(tmp_path, monkeypatch):
+def test_exhausted_budget_retains_unverified_export(tmp_path, monkeypatch):
     monkeypatch.setattr(
         prompts, "TEMPLATE_ROOT", Path(__file__).resolve().parents[1] / "codes/prompts"
     )
@@ -85,8 +85,8 @@ def test_exhausted_budget_does_not_export(tmp_path, monkeypatch):
         coder = PaperCoder(
             store, ScriptedProvider(responses), executor=ScriptedExecutor(["failed", "failed"])
         )
-        assert asyncio.run(run_verified(coder, index_paper(paper))) is None
-        assert not Path(settings.output_repo).exists()
+        output = asyncio.run(run_verified(coder, index_paper(paper)))
+        assert (output / "a.py").exists()
         assert json.loads((store.root / "report.json").read_text())["outcome"] == "incomplete"
 
 
@@ -121,11 +121,7 @@ def test_integration_regression_reopens_task_with_bounded_repair(tmp_path, monke
         assert coder.records["a"].fixes == 1
 
 
-def test_extracted_missing_method_reference_blocks_export_and_survives_report(
-    tmp_path, monkeypatch
-):
-    import pytest
-
+def test_extracted_missing_method_reference_is_reported_on_draft(tmp_path, monkeypatch):
     monkeypatch.setattr(
         prompts, "TEMPLATE_ROOT", Path(__file__).resolve().parents[1] / "codes/prompts"
     )
@@ -138,9 +134,8 @@ def test_extracted_missing_method_reference_blocks_export_and_survives_report(
         coder = PaperCoder(
             store, ScriptedProvider(responses), executor=ScriptedExecutor(["failed", "failed"])
         )
-        with pytest.raises(ValueError, match="Unresolved"):
-            asyncio.run(run_verified(coder, index_paper(paper)))
+        output = asyncio.run(run_verified(coder, index_paper(paper)))
         report = json.loads((store.root / "report.json").read_text())
         assert warning in report["unresolved_references"]
         assert report["outcome"] != "complete"
-        assert not Path(settings.output_repo).exists()
+        assert (output / "a.py").exists()

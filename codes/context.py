@@ -29,13 +29,13 @@ def build_packet(
     spec: PaperSpec,
     index: PaperIndex,
     dependencies: dict[str, str],
-    suite: TestSuite,
+    suite: TestSuite | None,
     *,
     findings: list | None = None,
 ) -> dict:
     requirements = [r for r in spec.requirements if r.id in task.requirement_ids]
     source_ids = {s.source_id for r in requirements for s in r.sources}
-    nodes = set(suite.task_targets[task.id])
+    nodes = set(suite.task_targets[task.id]) if suite else set()
     files = {node.split("::")[0] for node in nodes}
     modules = {i.module.replace(".", "/") for i in spec.interfaces if i.id in task.consumes}
     selected = {
@@ -53,8 +53,12 @@ def build_packet(
         "global_invariants": spec.global_invariants,
         "dependency_files": selected,
         "available_dependency_paths": sorted(dependencies),
-        "acceptance_files": [f.model_dump() for f in suite.files if f.path in files],
-        "properties": [p.model_dump() for p in suite.properties if set(p.node_ids) & nodes],
+        "acceptance_files": [f.model_dump() for f in suite.files if f.path in files]
+        if suite
+        else [],
+        "properties": [p.model_dump() for p in suite.properties if set(p.node_ids) & nodes]
+        if suite
+        else [],
         "prior_findings": findings or [],
         "available_source_ids": [e.source_id for e in index.excerpts],
         "source_labels": index.labels,

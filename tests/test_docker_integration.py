@@ -192,3 +192,30 @@ def test_generated_module_import_error_is_repairable(tmp_path):
     )
     assert result.status == "failed"
     assert "bad module initialization" in Path(result.stderr_artifact).read_text()
+
+
+def test_broken_acceptance_keeps_real_generated_draft(tmp_path, monkeypatch):
+    import json
+
+    from providers import ScriptedProvider
+    from slick import prompts
+    from test_verified_workflow import case
+
+    from codes.agent import PaperCoder, run_verified
+    from codes.paper import index_paper
+    from codes.store import RunStore
+
+    monkeypatch.setattr(
+        prompts, "TEMPLATE_ROOT", Path(__file__).resolve().parents[1] / "codes/prompts"
+    )
+    paper, settings, responses = case(tmp_path)
+    settings.image_id = os.environ["P2C_TEST_IMAGE"]
+    suite = json.loads(responses[5])
+    suite["files"][0]["content"] = "import missing_test_dependency\ndef test_value(): pass\n"
+    responses[5] = json.dumps(suite)
+    with RunStore.create(tmp_path / "run", settings) as store:
+        coder = PaperCoder(store, ScriptedProvider(responses[:6]))
+        output = asyncio.run(run_verified(coder, index_paper(paper)))
+        assert (output / "a.py").read_text() == "def f(x): return x*x\n"
+        report = json.loads((store.root / "report.json").read_text())
+        assert report["outcome"] == "draft" and not report["tests_verified"]

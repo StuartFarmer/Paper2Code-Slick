@@ -92,8 +92,8 @@ def run(store: RunStore, index: PaperIndex) -> int:
     output = asyncio.run(run_verified(coder, index))
     print(f"Report: {store.root / 'report.md'}")
     if output:
-        print(f"Repository saved to {output}")
-        return 0
+        print(f"Repository saved to {output} ({store.manifest.outcome})")
+        return 0 if store.manifest.outcome in {"complete", "draft"} else 1
     return 1
 
 

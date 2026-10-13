@@ -178,6 +178,7 @@ def evaluate(
             run = json.loads((root / "run/report.json").read_text())
             report.update(
                 outcome=run["outcome"],
+                workflow_outcome=run["outcome"],
                 calls_reserved=run["calls_reserved"],
                 measured_cost=run["measured_cost"],
             )
@@ -196,8 +197,7 @@ def evaluate(
                 )
             )
             report["external_check"] = result.model_dump()
-            if result.status != "passed":
-                report["outcome"] = "failed"
+            report["outcome"] = "complete" if result.status == "passed" else "failed"
         elif code != 0 and report["outcome"] == "complete":
             report["outcome"] = "failed"
     except KeyboardInterrupt:

@@ -1,5 +1,13 @@
 # Improved Paper2Code workflow
 
+> Current behavior amendment: the user requested useful imperfect code rather than
+> strict review gates that prevent all output. Generation now precedes acceptance
+> preparation, and draft dependencies can unblock downstream generation. Spec
+> objections and missing references are warnings; unverified candidates are
+> exported as drafts, never labelled accepted. The README is the current usage
+> contract; verified-only export requirements below describe the earlier design.
+
+
 Status: proposed design; implementation and paid evaluation have not started.
 Branch: `improved`. Requested by Stuart: plan first, then test with
 `openai/gpt-oss-120b:nitro`. The current working changes predate this design;

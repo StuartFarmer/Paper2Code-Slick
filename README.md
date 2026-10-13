@@ -1,13 +1,13 @@
 # Paper2Code-Slick
 
-Turn a JSON, Markdown, or LaTeX paper into a tested Python repository using a
-bounded Slick workflow. Independent tasks use fresh, small contexts; the
-controller accepts code only after Docker checks and a separate review pass.
+Turn a JSON, Markdown, or LaTeX paper into a Python repository using a bounded
+Slick workflow. Generate a useful draft first, then test and improve it. Review
+objections and failed checks are reported without withholding the generated code.
 
 This is the `improved` branch of the [Paper2Code fork](https://github.com/StuartFarmer/Paper2Code-Slick).
 The old sequential implementation has been replaced. GEPA remains V2 work.
 
-![Paper sources feed typed plans and independent acceptance tests; parallel tasks run checks and bounded repair before integration and export.](assets/workflow.svg)
+![Paper sources feed typed plans and parallel drafts, followed by independent tests, bounded repair, and an export with verification status.](assets/workflow.svg)
 
 [TikZ source](assets/workflow.tex) · [Design and limitations](docs/superpowers/specs/2026-10-13-improved-workflow-design.md)
 
@@ -42,7 +42,8 @@ verified wheel lock. Generated projects cannot install extra dependencies during
 The paper argument accepts extracted `.json`, `.md`/`.markdown`, or `.tex`, not
 PDFs or directories. LaTeX is indexed without expanding external `\input` files;
 unresolved references remain visible in the evidence. Missing method references
-identified during extraction block the run and are retained in the report. Supply consolidated source
+identified during extraction become warnings; the implementation records its assumptions.
+Supply consolidated source
 when relevant methods live in other files.
 
 Defaults are `openai/gpt-oss-120b:nitro`, `outputs/Transformer`, and
@@ -54,17 +55,24 @@ automatically escalates to a larger model.
 
 ## Workflow
 
-1. Index source excerpts and exact evidence spans. Extract requirements in parallel;
-   reconcile typed specification and task fragments with explicit interfaces.
-2. Author and review tests independently of candidate code. Each property names
-   its source requirement, input domain, oracle and numerical tolerance. Exercise
-   those tests against contract scaffolding, then freeze the acceptance suite.
-3. Schedule ready tasks in dependency order. Each task owns disjoint files and
-   receives relevant source, interfaces, tests, and selected dependency code.
-4. Generate a candidate, run syntax/import/pytest checks in Docker, and review it
-   in a fresh session. Diagnose failures before bounded production-code repair.
-5. Recombine accepted tasks, run the complete suite and integration smoke, review
-   source fidelity, and export the accepted snapshot plus its tests.
+1. Index source excerpts and form typed specification/task fragments. Specification
+   reviews advise the planner; a disputed interpretation is recorded as a warning.
+2. Generate all reachable tasks in dependency order, with independent branches in
+   parallel. Each task owns disjoint files. Downstream tasks can use draft dependencies.
+3. Author acceptance tests without exposing candidate code to the test author.
+   If the suite is malformed, cannot run, or fails review, preserve the draft and
+   report that verification could not proceed.
+4. Run syntax/import/pytest checks in Docker and apply bounded code repairs.
+   Exhausted repairs retain the latest candidate as a draft, never as accepted code.
+5. Run integration and fidelity checks where possible, then export the generated
+   repository with its measured status. Budget exhaustion and interrupted verification
+   also preserve code already generated.
+
+`complete` means verification finished without outstanding warnings. `draft` means
+all planned files were generated but some reviews or checks remain unresolved.
+`incomplete` or `failed` can still have a partial export: inspect `export_path` in
+`report.json`. The CLI exits zero for complete/draft generation and nonzero for
+budget exhaustion, interruption or runtime failure. Export is not proof of correctness.
 
 A model's `pass` cannot override missing or failing execution evidence. The
 container has no network or API credentials, a read-only filesystem and mounts,
@@ -85,9 +93,10 @@ that manipulates its own Python process.
 Use `--max-calls`, `--run-timeout`, `--concurrency`, and `--test-concurrency` to
 set a run's budgets. Large indivisible packets stop with a context-budget error;
 they are never silently truncated. Transport failures stop the run without hidden retries.
-Tests, interfaces or source interpretations needing correction block the current
-run; start a new reviewed run after correcting the input or prompts. Workers cannot
-weaken their own tests. Hypothesis uses deterministic generation/shrinking and
+Missing details and review disagreements become documented assumptions or warnings.
+Unsafe file paths, conflicting ownership and invalid dependency graphs still fail
+validation. Workers cannot weaken their own tests; test/spec problems leave a draft
+for inspection rather than consuming unlimited repair attempts. Hypothesis uses deterministic generation/shrinking and
 records actual statistics where available; stub failures are not property calibration.
 
 ## Logs and resume
@@ -102,7 +111,7 @@ Each operation prints its role, task, attempt and durable call ID. The run direc
 | `calls/` | Prompt, raw Slick history, reservation and outcome for every attempt |
 | `tasks/`, `integration/`, `executor/` | Candidates, diagnoses, reviews, measured checks and bounded logs |
 | `report.md`, `report.json` | Run outcome and source → requirement → property → test → execution links |
-| `accepted/` | Final snapshot, created only after integration and fidelity gates |
+| `accepted/`, `drafts/` | Verified snapshots and unverified generated code, kept separately |
 
 ```bash
 uv run python -m codes.workflow --resume outputs/AlphaEvolve_improved
@@ -113,6 +122,8 @@ image, and reuses accepted tasks and checks. New settings cannot be mixed with
 `--resume`. Interrupted reservations still count; a clean pause does not consume
 active time, but unobserved downtime after a hard crash is conservatively charged.
 Stale containers belonging to that locked run are removed before continuing.
+A resumed draft that changes is published under `exports/<hash>/`; the prior export
+is preserved and the current path is printed. User edits are never overwritten.
 Completed-run verification requires Docker but no API key. Incomplete runs exit
 nonzero; Ctrl-C exits 130 after cleanup and retains evidence.
 
@@ -136,7 +147,9 @@ The first command tests the controller offline; Docker checks are opt-in. The
 calibration command runs three frozen correct/fault pairs (six Docker checks),
 covering constant-output false positives, annualization and full-period scaling.
 The micro trial uses the exact GPT-OSS Nitro ID with 30 calls / 15 minutes and
-external acceptance tests withheld from model repair. Human adjudication and
+external acceptance tests withheld from model repair. A draft can pass this micro
+stage when those external tests pass; `workflow_outcome` retains its draft status.
+Human adjudication and
 property-review judgments remain separate from automated control results.
 Component (60 calls / 30 minutes) and full (120 calls / 60 minutes) stages require
 `--paper` and a passing `--previous path/to/evaluation.json`. They currently rely

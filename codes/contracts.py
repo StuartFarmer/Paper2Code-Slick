@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, field_validator
 
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
@@ -38,6 +38,11 @@ class Interface(BaseModel, extra="forbid"):
     semantics: Text
     shapes_units_and_time: Text
     state_and_errors: Text
+
+    @field_validator("module")
+    @classmethod
+    def import_name(cls, value: str) -> str:
+        return value.removesuffix(".py").replace("/", ".")
 
 
 class PaperSpec(BaseModel, extra="forbid"):
@@ -165,10 +170,13 @@ class RunManifest(BaseModel, extra="forbid"):
     plan_hash: str = ""
     suite_hash: str = ""
     accepted_hash: str = ""
+    export_hash: str = ""
+    export_path: str = ""
+    warnings: list[str] = Field(default_factory=list)
     calls_reserved: int = 0
     active_seconds: float = 0
     active_since: float | None = None
-    outcome: Literal["incomplete", "complete", "failed", "cancelled"] = "incomplete"
+    outcome: Literal["incomplete", "complete", "draft", "failed", "cancelled"] = "incomplete"
 
 
 class TaskRecord(BaseModel, extra="forbid"):
@@ -182,6 +190,7 @@ class TaskRecord(BaseModel, extra="forbid"):
         "reviewing",
         "repairing",
         "accepted",
+        "draft",
         "blocked",
         "cancelled",
     ]
@@ -270,7 +279,9 @@ class RequirementEvidence(BaseModel, extra="forbid"):
 
 
 class RunReport(BaseModel, extra="forbid"):
-    outcome: Literal["complete", "incomplete", "failed", "cancelled"]
+    outcome: Literal["complete", "draft", "incomplete", "failed", "cancelled"]
+    warnings: list[str]
+    export_path: str
     generation_complete: bool
     tests_verified: bool
     integration_verified: bool

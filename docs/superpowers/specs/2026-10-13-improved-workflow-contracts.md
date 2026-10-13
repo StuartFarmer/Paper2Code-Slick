@@ -1,5 +1,13 @@
 # Proposed Pydantic contracts
 
+> Current behavior amendment: the user requested useful imperfect code rather than
+> strict review gates that prevent all output. Generation now precedes acceptance
+> preparation, and draft dependencies can unblock downstream generation. Spec
+> objections and missing references are warnings; unverified candidates are
+> exported as drafts, never labelled accepted. The README is the current usage
+> contract; verified-only export requirements below describe the earlier design.
+
+
 Status: design, not installed code. Implements the boundaries in the
 [workflow design](2026-10-13-improved-workflow-design.md). Target module:
 `codes/contracts.py`. Avoid a generic agent/protocol hierarchy.
