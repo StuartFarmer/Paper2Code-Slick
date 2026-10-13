@@ -97,3 +97,12 @@ def test_crash_after_commit_does_not_erase_state(tmp_path, monkeypatch):
         with pytest.raises(OSError):
             store.save_task(TaskRecord(task_id="a", plan_hash="p", state="checking"))
         assert store.load_task("a").state == "checking"
+
+
+def test_identical_artifact_recovers_crash_before_inventory(tmp_path):
+    with RunStore.create(tmp_path / "run", manifest()) as store:
+        (store.root / "evidence.txt").write_text("original")
+        store.save_artifact("evidence.txt", "original")
+        assert store.read_artifact("evidence.txt") == "original"
+        with pytest.raises(FileExistsError):
+            store.save_artifact("evidence.txt", "changed")

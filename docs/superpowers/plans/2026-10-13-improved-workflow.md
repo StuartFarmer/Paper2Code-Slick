@@ -1,6 +1,6 @@
 # Improved Paper2Code implementation plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax. Implementation has not been authorized by this planning request; do not begin it as part of writing these documents.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax. Implementation was subsequently authorized by “can we begin development?”.
 
 **Goal:** Generate and verify research code through bounded, short-context tasks,
 then evaluate the complete flow with `openai/gpt-oss-120b:nitro`.
@@ -17,6 +17,9 @@ standard-library filesystem/subprocess tools, pytest, Docker/Python 3.11 executo
 **Spec:** [Design](../specs/2026-10-13-improved-workflow-design.md),
 [contracts](../specs/2026-10-13-improved-workflow-contracts.md),
 [tools and Docker](../specs/2026-10-13-improved-workflow-execution.md).
+
+Research amendment: [scientific fidelity + property testing](../../research_property_fidelity/integration.md).
+GEPA is V2; this plan adds no prompt optimizer or optimization budget.
 
 ## Global Constraints
 
@@ -45,8 +48,10 @@ standard-library filesystem/subprocess tools, pytest, Docker/Python 3.11 executo
    leave no active executor containers. Covered by Tasks 5 and 10.
 4. Prompt/schema edits or a crash during publication must not create false
    completion or reset budgets on resume. Covered by Tasks 4, 6, and 10.
-5. Tests that mirror an incorrect implementation, skip work, or leak held-out
-   data must not be counted as scientific verification. Covered by Tasks 7 and 11.
+5. Tests that mirror an incorrect implementation, skip work, or enforce an
+   unsupported scientific assumption must not count as verification. Distinguish
+   literal paper behavior from safer engineering deviations and deferred empirical
+   claims. Covered by Tasks 2, 6, 7, and 11.
 
 ## File structure and dependency order
 
@@ -105,6 +110,11 @@ SHA256 manifest over an explicit source/prompt/dependency allowlist.
 - [ ] Implement representation models and pure semantic checks. Use existing
   `output_path` behavior for filesystem boundaries; do not weaken its symlink
   checks. Keep source/code content unmodified during validation.
+- [ ] Add `Requirement.claim_kind`/`verification_scope`, `PropertySpec` on
+  `TestSuite`, and finding property/evidence links. Reject dangling property/node
+  IDs, missing required behavior coverage, and deferral of binding method
+  ambiguities. Preserve explicit empirical deferral reasons and engineering
+  deviations; nonempty fields do not prove scientific entailment.
 - [ ] Verify a three-task diamond graph is valid and accepted contracts round-trip
   through JSON without losing shape/time/source metadata; run the focused suite.
 - [ ] Commit contracts, checks, and tests together.
@@ -163,6 +173,11 @@ with the exact signatures in the execution document.
   deadlines, inspect/remove cleanup, and trusted check-target mapping.
 - [ ] Build the native image with pinned executor dependencies and import checks.
   Record its ID, lock hash, and platform; no model-generated requirements install.
+- [ ] Include Hypothesis and load the trusted profile before test imports, with
+  explicit plugin allowlisting. Check known-counterexample shrinking/replay,
+  impossible generators, flaky state, small exhausted domains, timeout, settings
+  overrides and truncated replay output. Save measured statistics or nulls;
+  `max_examples` is not the execution timeout. Keep existing resource limits.
 - [ ] Run real Docker tests for pass/fail/zero tests, timeout, a spawned descendant,
   OOM, output flood, read-only mounts, secret absence, network isolation, and
   cancellation. Assert no labelled containers remain after every case. Unit-test
@@ -188,6 +203,12 @@ with the exact signatures in the execution document.
 - [ ] Run prompt tests (RED). Adapt only the relevant role instructions listed in
   the design, with separate Jinja files and explicit output schemas. Keep branching
   in Python. Copy attribution/license without modifying the submodule.
+- [ ] Incorporate the researched Trail of Bits property checks and K-Dense
+  claim/evidence discipline into existing author/review/spec prompts. Pin source
+  revisions and include applicable license notices for adapted text. Rendering
+  fixtures must distinguish full-period normalization from train-only deviation,
+  valid metamorphic relations from unsupported invariants, and empirical claims
+  from synthetic behavior checks. No new permanent reviewer role.
 - [ ] Implement packet selection and serialized UTF-8 byte checks. Test exactly
   32,768 versus 32,769 bytes, nested schema overhead, a context request for an
   unrelated path, and oversized review/fix diffs. Fresh calls carry only required
@@ -211,6 +232,10 @@ and registered `CheckSpec` records per task/integration.
 - [ ] Test rejected empty/vacuous/skipped suites, unknown node targets, test-author
   context containing no candidate code, and a syntax/import setup error being
   distinguished from an expected behavior failure.
+- [ ] Require property justifications, domains, numerical tolerances and oracle
+  provenance in each fragment. Test that the reviewer sees sources and properties
+  without candidate code. Preserve exact examples when no useful generator exists;
+  unsupported properties block suite freezing even if their code executes.
 - [ ] Run focused tests (RED); implement test author/reviewer steps, fixture
   staging, RED evidence against contract scaffolding, and suite freezing. Author
   per-task `TestSuite` fragments plus separate edge/end-to-end fragments; use
@@ -221,6 +246,11 @@ and registered `CheckSpec` records per task/integration.
   A needed test correction creates a new suite hash and invalidates old evidence.
 - [ ] Run scripted flow plus real-container small acceptance tests. Assert
   `verdict=pass` cannot override failed/zero/missing test execution.
+- [ ] Bind property evidence to the frozen suite and executed nodes. Classify
+  generator/test defects separately from code defects; never weaken tolerances
+  inside implementation repair. Calibrated reference/fault fixtures use existing
+  check records; ordinary generated properties without fixtures stay explicitly
+  uncalibrated. RED against a stub alone is not calibration.
 - [ ] Commit acceptance preparation and its evidence gates.
 
 ## Task 8: Implement one complete task and bounded repair
@@ -232,6 +262,10 @@ and registered `CheckSpec` records per task/integration.
 - [ ] Script cases for first-attempt success; missing context; malformed JSON;
   failed numeric test repaired once; repeated failure; API error; stale review;
   false model success; forbidden file change; and requested interface change.
+- [ ] Add diagnosis cases for invalid property, inadequate generator, source
+  ambiguity and infrastructure failure. Supply compact counterexample evidence;
+  route test/spec corrections through review, rehash and invalidation rather than
+  permitting the implementer to change its own tests.
 - [ ] Run focused tests (RED); implement generate/stage/check/review/diagnose/fix/
   scoped-review transitions using the exact budgets. Generated tests/code execute
   only through Docker. Check dependency hashes immediately before acceptance.
@@ -280,6 +314,10 @@ spec, a complete `RunReport`, and export only from an integration-verified snaps
 - [ ] Add durable resume, final checks, hashed report provenance, readable progress,
   budget summaries, and explicit unknown token/cost fields. Exit nonzero for
   incomplete work; return 130 for SIGINT after Docker cleanup.
+- [ ] Report source -> requirement -> property -> node -> execution links,
+  calibration status and explicitly deferred empirical claims. Tested code may
+  export without claiming published-result reproduction; unresolved required
+  method behavior still blocks acceptance.
 - [ ] Run no-paid-call end-to-end and interrupt/resume checks. Confirm completed
   tasks are reused, changed inputs rejected, integration regressions reopen owning
   tasks/descendants, and final export matches the accepted snapshot.
@@ -298,6 +336,15 @@ or large-model-equivalence claim.
   integrating task. Write external acceptance tests and deliberately incorrect
   examples proving the tests catch the target bugs; keep these outside model
   mutation and do not tune them after seeing candidate outcomes.
+- [ ] Calibrate at most six independently adjudicated reference/fault pairs
+  (12 Docker checks) within existing time limits, plus valid/invalid/ambiguous
+  property-review cases within model call limits. Include constant-output false
+  positives, annualization conventions and full-period versus train-only scaling.
+  Count semantic assertion failures only; report inconclusive controls. Measure
+  false acceptance/rejection and unresolved judgments with denominators.
+- [ ] Freeze holdout checks separately from visible development fixtures. Never
+  feed holdout content into model repair; if revealed, relabel it development
+  evidence. Do not claim reviewer independence or equivalence from one micro-run.
 - [ ] Test the evaluation driver offline, including failed/cancelled runs, unknown
   cost, baseline provenance, and inclusion of all repair calls in totals.
 - [ ] After implementation approval and offline/Docker success, run the exact
@@ -323,3 +370,20 @@ Focus items and the source-grounded acceptance criteria.
 Planning completion means the branch and these documents exist and have been
 checked for consistency. It does not mean any proposed tool, Pydantic model,
 Docker isolation, resume feature, or model experiment has been implemented.
+
+## Implementation status (2026-10-13)
+
+The verified V1 controller, CLI, Docker executor, prompts and offline evaluation
+fixtures are implemented on `improved`. Use the current README for executable
+commands. Task 11's paid GPT-OSS stages and independent human adjudication have
+not run; an OpenRouter key is absent in the development environment.
+
+Implementation amendments: `codes/agent.py` owns the workflow and
+`codes/workflow.py` the CLI; `run_verified` handles exceptions outside Slick's
+restricted workflow syntax. The initial CPU wheel lock is Linux ARM64.
+Oversized interface registries or indivisible packets block instead of silently
+truncating evidence; automatic pairwise repartition is not implemented. Test/spec
+corrections require a new reviewed run; only implementation/schema repair is
+automatic. Component/full trial scientific adjudication remains manual.
+These boundaries narrow the original plan and are not evidence that its entire
+evaluation ladder or all proposed acceptance cases have been completed.

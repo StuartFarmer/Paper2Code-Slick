@@ -4,15 +4,99 @@ import asyncio
 import json
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import time
 import uuid
 from pathlib import Path
 
-from .contracts import Candidate, CheckSpec, ExecutionResult, RunnerReport, TaskSpec
+from .contracts import (
+    Candidate,
+    CheckSpec,
+    ExecutionResult,
+    PaperSpec,
+    RunnerReport,
+    TaskPlan,
+    TaskSpec,
+)
+from .paths import output_path
 from .store import digest
-from .workflow import output_path
 
 LOG_LIMIT = 1024 * 1024
+
+
+def cleanup_run(run_id: str) -> None:
+    """Call only while holding this run's controller lock."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", run_id):
+        raise ValueError("Invalid executor run label")
+    result = subprocess.run(
+        [
+            "docker",
+            "ps",
+            "-a",
+            "--filter",
+            "label=paper2code.executor=true",
+            "--filter",
+            f"label=paper2code.run={run_id}",
+            "--format",
+            "{{.Names}}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    for name in result.stdout.splitlines():
+        if not re.fullmatch(r"p2c-[A-Za-z0-9_-]+", name):
+            raise ValueError("Unexpected executor container name")
+        subprocess.run(
+            ["docker", "rm", "--force", name], capture_output=True, timeout=30, check=True
+        )
+
+
+def contract_scaffolds(spec: PaperSpec, plan: TaskPlan) -> dict[str, str]:
+    files = {path: "" for task in plan.tasks for path in task.owned_paths}
+    for interface in spec.interfaces:
+        module = interface.module.replace(".", "/")
+        path = module + ".py" if module + ".py" in files else module + "/__init__.py"
+        if path not in files or not interface.symbol.isidentifier():
+            raise ValueError(f"Interface needs a simple owned module/symbol: {interface.id}")
+        if interface.symbol[0].isupper():
+            files[path] += (
+                f"class {interface.symbol}:\n    def __init__(self, *args, **kwargs):\n        raise NotImplementedError('contract scaffold')\n\n"
+            )
+        else:
+            files[path] += (
+                f"def {interface.symbol}(*args, **kwargs):\n    raise NotImplementedError('contract scaffold')\n\n"
+            )
+    return files
+
+
+def materialize_snapshot(root: Path, files: dict[str, str]) -> str:
+    expected = digest(
+        json.dumps(
+            {name: digest(content.encode()) for name, content in files.items()}, sort_keys=True
+        ).encode()
+    )
+    if root.exists():
+        if tree_hash(root) != expected:
+            raise ValueError("Existing snapshot differs from frozen artifacts")
+        return expected
+    for name in files:
+        output_path(root, name)
+    root.parent.mkdir(parents=True, exist_ok=True)
+    temporary = Path(tempfile.mkdtemp(prefix=".snapshot-", dir=root.parent))
+    try:
+        for name, content in files.items():
+            path = output_path(temporary, name)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        os.rename(temporary, root)
+    finally:
+        if temporary.exists():
+            shutil.rmtree(temporary)
+    return expected
 
 
 def tree_hash(root: Path) -> str:
@@ -32,6 +116,8 @@ def stage_candidate(
     *,
     dependencies: dict[str, str] | None = None,
 ) -> str:
+    if workspace.exists():
+        raise FileExistsError(workspace)
     files = {f.path: f.content for f in candidate.files}
     if len(files) != len(candidate.files) or set(files) != set(task.owned_paths):
         raise ValueError("Candidate must supply exactly its owned files")
@@ -44,14 +130,7 @@ def stage_candidate(
     if files.keys() & dependencies.keys():
         raise ValueError("Candidate overlaps dependency files")
     files = {**dependencies, **files}
-    for name in files:
-        output_path(workspace, name)
-    workspace.mkdir(parents=True, exist_ok=False)
-    for name, content in files.items():
-        path = output_path(workspace, name)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
-    return tree_hash(workspace)
+    return materialize_snapshot(workspace, files)
 
 
 def docker_argv(check: CheckSpec, workspace: Path, suite: Path, image: str, name: str) -> list[str]:
@@ -157,9 +236,14 @@ async def run_check(
     *,
     evidence_dir: Path | None = None,
     dependency_hash: str = "",
+    run_id: str = "",
 ) -> ExecutionResult:
     name = "p2c-" + uuid.uuid4().hex
     argv = docker_argv(check, workspace, suite, image, name)
+    if run_id:
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", run_id):
+            raise ValueError("Invalid executor run label")
+        argv[2:2] = ["--label", f"paper2code.run={run_id}"]
     candidate_hash, suite_hash = tree_hash(workspace), tree_hash(suite)
     evidence_dir = evidence_dir or workspace.parent / "checks" / name
     evidence_dir.mkdir(parents=True, exist_ok=False)
@@ -212,7 +296,7 @@ async def run_check(
             try:
                 result = parse_report(stdout_result[1], check)
                 status = "passed" if process.returncode == result["exit_code"] == 0 else "failed"
-                if result.get("errors"):
+                if result.get("errors") and check.kind != "syntax":
                     status = "infrastructure_error"
             except (ValueError, TypeError):
                 status = "infrastructure_error"
@@ -243,6 +327,7 @@ async def run_check(
         collected_tests=len(result["collected"]) if "collected" in result else None,
         property_statistics=result.get("property_statistics", {}),
         replay_complete=not truncated,
+        failed_nodes=result.get("failed", []),
     )
     (evidence_dir / "result.json").write_text(outcome.model_dump_json(indent=2))
     if cancelled:

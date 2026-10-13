@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from .contracts import CallRecord, RunManifest, TaskRecord
-from .workflow import output_path
+from .paths import output_path
 
 
 class BudgetExceeded(RuntimeError):
@@ -146,7 +146,11 @@ class RunStore:
             "events.jsonl",
         }:
             raise ValueError("Reserved controller state path")
-        atomic_write(path, content, immutable=True)
+        try:
+            atomic_write(path, content, immutable=True)
+        except FileExistsError:
+            if path.read_bytes() != content.encode("utf-8"):
+                raise
         self.artifacts[relative_path] = digest(content.encode("utf-8"))
         atomic_write(
             self.root / "artifacts.json", json.dumps(self.artifacts, sort_keys=True) + "\n"

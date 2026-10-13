@@ -10,6 +10,7 @@ Companion documents:
 - [Pydantic contracts](2026-10-13-improved-workflow-contracts.md)
 - [Tools and Docker](2026-10-13-improved-workflow-execution.md)
 - [Implementation plan](../plans/2026-10-13-improved-workflow.md)
+- [Property testing and scientific fidelity research](../../research_property_fidelity/integration.md)
 
 ## Intent and evidence
 
@@ -27,7 +28,11 @@ context not represented in those strings.
 Original responses in `outputs/AlphaEvolve_openrouter/calls/coding/` contain
 parameter-generator addition in `baseline_lstm.py`, normalization before splitting
 in `feature_engineer.py`, and an annualization factor cancelling itself in metric
-code. The original task list has no tests. The output repository now contains
+code. These need different judgments: the supplied paper explicitly specifies
+all-time normalization (`paper/main.tex:301`), so train-only scaling is an
+engineering deviation, not a correction required for literal replication.
+Annualization conventions also need an explicit contract. The original task list
+has no tests. The output repository now contains
 later repairs; use saved calls, not its current files, to evaluate the original
 generation. Current orchestration saves files but never executes them.
 
@@ -51,6 +56,8 @@ Non-goals: GPU training in V1, automatically provisioning datasets, unrestricted
 dependency installation, full arXiv project ingestion, automatic deployment,
 and claims that passing tests proves exact replication or predictive value.
 Unresolved data or methodological requirements must appear in the final report.
+GEPA investigation and prompt optimization are V2; V1 only preserves the versioned
+prompts, trajectories and measured feedback that can support that later research.
 
 ## Binding defaults
 
@@ -87,7 +94,7 @@ flowchart TD
     B --> C[Parallel requirement extraction]
     C --> D[Reconcile specification and interfaces]
     D --> E[Validate task graph and file ownership]
-    E --> F[Independent test author and test review]
+    E --> F[Source-linked properties and independent test review]
     F --> G[Freeze acceptance suite and baseline failures]
     G --> H[Schedule ready tasks in parallel]
     H --> I[Build small task packet]
@@ -160,6 +167,15 @@ not candidate implementation. A different fresh context reviews the tests for
 meaningful assertions, forbidden assumptions, and paper fidelity. Small numeric
 examples with hand-checkable expected values are preferred.
 
+Each `TestSuite` fragment includes `PropertySpec` records linking requirements
+to test nodes, justified relationships, domains, oracles and tolerances. Reuse
+`review_tests` to check both source entailment and executable test quality; no
+new permanent agent. Pair useful invariants/metamorphic tests with independent
+numeric anchors so constant-output programs cannot pass by consistency alone.
+Use examples when no meaningful generated property is justified. Classify
+empirical claims separately and defer them explicitly when V1 lacks their data
+or experiment; never convert a performance claim into a universal invariant.
+
 Tests run against contract scaffolding first. An expected missing implementation
 failure is useful RED evidence; a syntax error, missing third-party dependency,
 or faulty fixture is an infrastructure/test defect. Test review checks that
@@ -178,6 +194,11 @@ An implementation cannot delete, rewrite, skip, or xfail acceptance tests.
 Legitimate test corrections require a separate test review, a new suite hash,
 and invalidation of all dependent evidence. Test validity remains fallible;
 keep a curated evaluation suite outside model-editable artifacts.
+Selected external evaluation properties also get a correct-reference/known-fault
+calibration pair. A stub failure is not semantic calibration. Uncalibrated
+properties remain labelled as such; generic runs do not invent trusted oracles.
+The executor uses bounded Hypothesis checks and preserves counterexamples, health
+outcomes and replay provenance as specified in the execution companion.
 
 ### 4. Implement ready tasks
 
@@ -202,6 +223,8 @@ hashes. A prose claim of success is insufficient.
 Syntax/schema errors use the existing bounded schema-repair idea. Behavioral
 failures go to a diagnosis prompt with focused test output, relevant code, and
 contracts. It returns a root-cause hypothesis, evidence, and intended fix. The
+diagnosis distinguishes code defects, invalid properties/generators, unresolved
+source interpretation and infrastructure failures before routing a repair. The
 repair prompt receives only the affected files and findings. Re-review covers
 the fix and prior findings rather than restarting a broad review each time.
 
@@ -223,6 +246,8 @@ deviations using task evidence. Large projects are reviewed by requirement group
 before a compact final reconciliation. Report separate outcomes: code generated,
 tests verified, integration verified, and paper requirements supported/deviated/
 unresolved. Never equate these with reproducing published numerical results.
+The controller derives the requirement -> property -> test -> execution links;
+fresh model reviewers cannot replace missing execution or empirical evidence.
 
 ## Persistence and observability
 
@@ -283,6 +308,11 @@ commits, unrestricted terminal commands, and human approval at every task.
 Workers return artifacts; Python schedules and integrates them. Preserve useful
 judgment instructions, but enforce budgets and completion in code.
 
+Also adapt the focused property-authoring/review guidance from Trail of Bits and
+claim/evidence reasoning from K-Dense, as mapped in the research companion. Pin
+source revisions and retain their applicable attribution/licenses when copying.
+They extend existing test/spec/fidelity prompts, not the runtime role graph.
+
 ## Model routing and evaluation
 
 For the first experiment, every role uses the user's exact OpenRouter ID,
@@ -310,8 +340,12 @@ Evaluation stages, in order:
    acceptance tests and final integration to pass before progressing.
 4. **AlphaEvolve component run:** source-grounded preprocessing, one symbolic
    operator, and metric calculation against synthetic data. Maximum 60 calls,
-   30 minutes. Tests include no future-data normalization influence and exact
-   hand-calculated numerical cases. This is a component evaluation, not replication.
+   30 minutes. Tests include exact numerical cases and an explicitly declared
+   train-only-normalization engineering deviation. Literal full-period scaling
+   has a separate reference fixture; do not silently relabel it as a code bug.
+   This is a component evaluation, not replication. Calibrate selected tests and
+   reviewer decisions against frozen correct/faulty/invalid-property fixtures;
+   at most six reference/fault pairs (12 checks) inside the existing time budget.
 5. **Full workflow:** one bounded AlphaEvolve generation using the 120-call/
    60-minute defaults. CPU-only synthetic smoke, no dataset downloads or full
    training. Report missing data and approximations explicitly.
@@ -327,3 +361,20 @@ A smaller-model successful smoke establishes functioning plumbing and bounded
 task solving, not large-model equivalence. A strong baseline model and monetary
 budget for stage 6 remain choices for that later experiment; they do not block
 implementation or the requested GPT OSS smoke.
+
+## Implementation status (2026-10-13)
+
+The verified V1 controller, CLI, Docker executor, prompts and offline evaluation
+fixtures are implemented on `improved`. Use the current README for executable
+commands. Task 11's paid GPT-OSS stages and independent human adjudication have
+not run; an OpenRouter key is absent in the development environment.
+
+Implementation amendments: `codes/agent.py` owns the workflow and
+`codes/workflow.py` the CLI; `run_verified` handles exceptions outside Slick's
+restricted workflow syntax. The initial CPU wheel lock is Linux ARM64.
+Oversized interface registries or indivisible packets block instead of silently
+truncating evidence; automatic pairwise repartition is not implemented. Test/spec
+corrections require a new reviewed run; only implementation/schema repair is
+automatic. Component/full trial scientific adjudication remains manual.
+These boundaries narrow the original plan and are not evidence that its entire
+evaluation ladder or all proposed acceptance cases have been completed.

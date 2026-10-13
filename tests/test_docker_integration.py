@@ -153,3 +153,28 @@ def test_property_statistics_and_profile_override(tmp_path):
         test="from hypothesis import given, strategies as st, settings\n@settings(max_examples=1)\n@given(st.integers())\ndef test_ok(x): pass\n",
     )
     assert result.status != "passed"
+
+
+def test_complete_workflow_uses_real_execution(tmp_path, monkeypatch):
+    import json
+
+    from providers import ScriptedProvider
+    from slick import prompts
+    from test_verified_workflow import case
+
+    from codes.agent import PaperCoder, run_verified
+    from codes.paper import index_paper
+    from codes.store import RunStore
+
+    monkeypatch.setattr(
+        prompts, "TEMPLATE_ROOT", Path(__file__).resolve().parents[1] / "codes/prompts"
+    )
+    paper, settings, responses = case(tmp_path)
+    settings.image_id = os.environ["P2C_TEST_IMAGE"]
+    with RunStore.create(tmp_path / "run", settings) as store:
+        coder = PaperCoder(store, ScriptedProvider(responses))
+        output = asyncio.run(run_verified(coder, index_paper(paper)))
+        assert (output / "a.py").exists()
+        report = json.loads((store.root / "report.json").read_text())
+        assert report["integration_verified"]
+        assert report["outcome"] == "complete"

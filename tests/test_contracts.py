@@ -183,3 +183,10 @@ def test_false_passing_review_and_malformed_worker_replies_rejected():
         validate_review(Review(verdict="pass", findings=[], unresolved_requirement_ids=["r"]))
     with pytest.raises(ValidationError):
         TypeAdapter(WorkerReply).validate_python({"kind": "accepted", "files": []})
+
+
+def test_required_empirical_claim_cannot_pass_synthetic_gate():
+    spec, plan = spec_plan()
+    spec.requirements[0].claim_kind = "empirical"
+    with pytest.raises(ValueError, match="empirical"):
+        validate_plan(spec, plan)

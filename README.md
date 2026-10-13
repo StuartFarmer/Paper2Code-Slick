@@ -1,227 +1,159 @@
 # Paper2Code-Slick
 
-Generate a code repository from a research paper using one Slick workflow.
-A single `PaperCoder` class plans the implementation, analyzes each file, and
-writes code in dependency order. Model instructions live in six local Jinja
-templates.
+Turn a JSON, Markdown, or LaTeX paper into a tested Python repository using a
+bounded Slick workflow. Independent tasks use fresh, small contexts; the
+controller accepts code only after Docker checks and a separate review pass.
 
-This fork adapts [Paper2Code](https://github.com/going-doer/Paper2Code). It retains
-the three-stage method and prompt instructions while replacing the separate scripts
-and provider-specific implementations with Slick sessions and providers.
+This is the `improved` branch of the [Paper2Code fork](https://github.com/StuartFarmer/Paper2Code-Slick).
+The old sequential implementation has been replaced. GEPA remains V2 work.
 
-![Slick workflow: paper input, four planning calls in a shared session, independent per-file analysis, sequential coding with previously written code, and a generated repository.](assets/workflow.svg)
+![Paper sources feed typed plans and independent acceptance tests; parallel tasks run checks and bounded repair before integration and export.](assets/workflow.svg)
 
-[TikZ source](assets/workflow.tex)
+[TikZ source](assets/workflow.tex) · [Design and limitations](docs/superpowers/specs/2026-10-13-improved-workflow-design.md)
 
-## Run it
+## Install and run
 
-Use Python 3.10+ and install Slick from PyPI in the Python environment you want
-to use:
+Use Python 3.10+ and a running Docker daemon. Slick is installed from PyPI;
+no Slick Git checkout is needed. With `uv`, run from this repository:
 
 ```bash
-pip install slick-ai
+uv sync --locked
+bash scripts/build-executor.sh
+export OPENROUTER_API_KEY="<your-new-openrouter-key>"
+set -o pipefail
+uv run python -m codes.workflow \
+  /Users/stuart/Developer/AI/arXiv-2103.16196v2/paper/main.tex \
+  --model openai/gpt-oss-120b:nitro \
+  --output-dir outputs/AlphaEvolve_improved \
+  --output-repo-dir outputs/AlphaEvolve_improved_repo \
+  2>&1 | tee AlphaEvolve_improved.log
 ```
 
-Install and authenticate the `codex` CLI first; this workflow uses its configured
-model and credentials. From this repository's root:
+Alternatively, in your own activated environment, install `pip install -r requirements.txt`
+(which installs `slick-ai[openai]` from PyPI), then use `python` in place of `uv run python`.
+Do not run `uv init`: the project is already configured. `uv pip install` can target a
+different active environment; `uv sync` installs the project's locked environment.
 
-```bash
-python -m codes.workflow examples/Transformer.json \
-    --model codex \
-    --output-dir outputs/Transformer \
-    --output-repo-dir outputs/Transformer_repo
-```
+The executor lock currently targets **Linux ARM64 / Python 3.11**, tested using
+Docker Desktop on Apple Silicon. It includes CPU-only PyTorch, NumPy, pandas,
+SciPy, PyYAML, pytest and Hypothesis. An x86 image needs a separately resolved and
+verified wheel lock. Generated projects cannot install extra dependencies during checks.
 
-The JSON input is a paper extracted from a PDF, not the PDF itself. Extraction
-metadata is removed automatically. Markdown (`.md` or `.markdown`) and LaTeX
-(`.tex`) are read as text; for example, pass `paper.md` or
-`examples/Transformer_cleaned.tex` instead. Markdown extensions are recognized
-regardless of case and labeled as Markdown in the prompts. To prepare a PDF, use a converter
-such as [s2orc-doc2json](https://github.com/allenai/s2orc-doc2json) first.
+The paper argument accepts extracted `.json`, `.md`/`.markdown`, or `.tex`, not
+PDFs or directories. LaTeX is indexed without expanding external `\input` files;
+unresolved references remain visible in the evidence. Supply consolidated source
+when relevant methods live in other files.
 
-The CLI defaults to `codex`, `outputs/Transformer`, and
-`outputs/Transformer_repo`. Set both output paths when starting a separate run:
-matching files are overwritten, and unrelated existing files are retained.
+Defaults are `openai/gpt-oss-120b:nitro`, `outputs/Transformer`, and
+`outputs/Transformer_repo`. **Both output directories must be unused**, distinct,
+and not nested. Existing files are never overwritten by a new run. V1 supports
+OpenRouter IDs only; `codex` and `claude` CLI aliases fail before any model call.
+Use `--planner-model` and `--reviewer-model` for explicit role overrides. Nothing
+automatically escalates to a larger model.
 
-## How the workflow runs
+## Workflow
 
-1. **Plan.** Four calls share one session: reproduction overview, architecture
-   and interfaces, ordered file tasks, and configuration. The workflow validates
-   the task list and generated paths before writing the repository. Each planning
-   prompt includes the paper, so it remains available across CLI invocations.
-2. **Analyze.** Each planned file gets a fresh session containing the paper,
-   plan, design, task list, and config. All file analyses finish before coding
-   begins.
-3. **Code.** Files are generated sequentially in task order. Each call gets a
-   fresh session with that file's analysis and previously generated source code.
-   `config.yaml` comes from planning and is not generated again.
+1. Index source excerpts and exact evidence spans. Extract requirements in parallel;
+   reconcile typed specification and task fragments with explicit interfaces.
+2. Author and review tests independently of candidate code. Each property names
+   its source requirement, input domain, oracle and numerical tolerance. Exercise
+   those tests against contract scaffolding, then freeze the acceptance suite.
+3. Schedule ready tasks in dependency order. Each task owns disjoint files and
+   receives relevant source, interfaces, tests, and selected dependency code.
+4. Generate a candidate, run syntax/import/pytest checks in Docker, and review it
+   in a fresh session. Diagnose failures before bounded production-code repair.
+5. Recombine accepted tasks, run the complete suite and integration smoke, review
+   source fidelity, and export the accepted snapshot plus its tests.
 
-A successful run makes **4 + 2N model calls**, where N is the number of planned
-files other than `config.yaml`. Analysis calls have independent context but run
-sequentially too. The workflow writes code; it does not execute it, install its
-dependencies, or evaluate whether it reproduces the paper.
+A model's `pass` cannot override missing or failing execution evidence. The
+container has no network or API credentials, a read-only filesystem and mounts,
+a non-root user, one CPU, 2 GiB RAM, and bounded output. Docker isolates generated
+execution from the host; it is not a proof against deliberately adversarial code
+that manipulates its own Python process.
 
-Planning JSON must be valid. Invalid output and provider errors stop the run
-without automatic retries or repair. Partial files and call logs remain on disk.
-Rerunning starts from planning; this CLI does not enable persistent workflow
-resume. Generated paths cannot escape the output directory or use hidden paths
-or symlinks beneath it.
-
-## Outputs
-
-```text
-outputs/
-├── Transformer/
-│   ├── planning/
-│   │   ├── overview.txt
-│   │   ├── design.json
-│   │   ├── tasks.json
-│   │   └── config.yaml
-│   ├── analysis/
-│   │   └── <filename>.txt
-│   ├── calls/
-│   │   ├── planning.json
-│   │   ├── analysis/<filename>.json
-│   │   └── coding/<filename>.json
-│   └── failure.json                 # model-call or empty-response failure
-└── Transformer_repo/
-    ├── config.yaml
-    └── ...generated files
-```
-
-Nested filenames retain their directories. Call logs contain Slick session
-history, including the rendered context, raw response text, and tool work.
-Responses remain available even if later parsing fails. No token or cost
-reports are produced.
-
-## Choose a model
-
-`--model` selects the provider automatically:
-
-| Value | Slick provider | Authentication and model |
-| --- | --- | --- |
-| `codex` (default) | `CodexCLI` | Installed Codex CLI's credentials and configured model |
-| `claude` | `ClaudeCLI` | Installed Claude Code CLI's credentials and configured model |
-| `provider/model` | `OpenRouterAPI` | `OPENROUTER_API_KEY`; the exact model ID is passed through |
-
-```bash
-# Codex CLI (also the default when --model is omitted)
-python -m codes.workflow examples/Transformer.json --model codex
-
-# Claude Code CLI
-python -m codes.workflow examples/Transformer.json --model claude
-```
-
-For OpenRouter, install Slick's optional OpenAI SDK dependency and export your
-OpenRouter key in the same shell before running the workflow:
-
-```bash
-pip install "slick-ai[openai]"
-export OPENROUTER_API_KEY="<your-openrouter-key>"
-python -m codes.workflow examples/Transformer.json --model anthropic/claude-sonnet-4.5
-```
-
-`pip install -r requirements.txt` also installs Slick with OpenRouter support
-from PyPI. No Slick source checkout is needed. The key is read from
-`OPENROUTER_API_KEY`; Codex and Claude CLI runs use their own authentication.
-
-The aliases `codex` and `claude` choose a CLI, not a model sent to that CLI.
-Configure the underlying model in the CLI itself. Other values must contain a
-slash and are treated as OpenRouter IDs, including `openrouter/auto`. Bare names
-such as `o3-mini` are rejected; an OpenRouter model needs its provider prefix.
-Model availability and access are checked by OpenRouter when called.
-
-Every provider has a 600-second call timeout. The workflow adds no retries;
-CLI-internal behavior follows the installed tool. OpenRouter requests have a
-32,768-token output cap and no transport retries. Codex uses Slick's read-only
-sandbox default. Claude runs in print mode with built-in tools disabled, no MCP
-servers loaded, and permission mode `dontAsk`.
-
-Each CLI call starts a new process. Slick carries the planning responses between
-calls; the later planning templates repeat the paper explicitly. Analysis and
-coding still use fresh Slick sessions for every file. The old `--api-base`
-option and vLLM-specific launchers have been removed.
-
-## Convenience scripts
-
-These launch the same workflow with the bundled Transformer inputs:
-
-| Script | Input | Provider |
-| --- | --- | --- |
-| `bash scripts/run.sh` | JSON | Codex CLI by default |
-| `bash scripts/run_latex.sh` | LaTeX | Codex CLI by default |
-
-Override `PAPER_PATH`, `MODEL_NAME`, `OUTPUT_DIR`, `OUTPUT_REPO_DIR`, or `PYTHON`
-through environment variables. `MODEL_NAME` accepts the same values as `--model`.
-Append CLI flags to override defaults, for example `bash scripts/run.sh --model claude`.
-The scripts change into the repository root before resolving input and output
-paths; invoke the script by its full path when working elsewhere.
-
-## Python API
-
-Set the process-wide template root once at application startup and inject a
-Slick provider. Run Codex from a trusted Git working directory. Use one
-`PaperCoder` instance per run.
-
-```python
-import asyncio
-from pathlib import Path
-
-from slick import prompts
-from slick.providers import CodexCLI
-
-from codes import workflow
-
-prompts.TEMPLATE_ROOT = Path(workflow.__file__).resolve().parent / "prompts"
-paper, paper_format = workflow.load_paper(Path("examples/Transformer.json"))
-coder = workflow.PaperCoder(
-    paper,
-    paper_format,
-    CodexCLI(timeout=600),
-    Path("outputs/Transformer"),
-    Path("outputs/Transformer_repo"),
-)
-asyncio.run(coder.run())
-```
-
-## Development
-
-| Path | Purpose |
+| Budget | Default |
 | --- | --- |
-| [`codes/workflow.py`](codes/workflow.py) | Prompt methods, orchestration, file writing, CLI |
-| [`codes/paper.py`](codes/paper.py) | JSON cleanup and paper loading |
-| [`codes/prompts/`](codes/prompts/) | Overview, design, tasks, config, analysis, and coding templates |
-| [`tests/`](tests/) | Offline checks with a scripted provider |
-| [`data/`](data/) and [`examples/`](examples/) | Paper data and reference repositories |
+| Concurrent model / Docker calls | 4 / 2 |
+| Total model calls, including repairs | 120 |
+| Active run time / per-call timeout | 3600 s / 600 s |
+| Rendered input, including schema | 32,768 UTF-8 bytes |
+| Output tokens | 8192 |
+| Schema repairs per response | 2 |
+| Code fixes / context expansions per task | 2 / 2 |
 
-Run the offline tests without API credentials or a GPU:
+Use `--max-calls`, `--run-timeout`, `--concurrency`, and `--test-concurrency` to
+set a run's budgets. Large indivisible packets stop with a context-budget error;
+they are never silently truncated. Transport failures stop the run without hidden retries.
+Tests, interfaces or source interpretations needing correction block the current
+run; start a new reviewed run after correcting the input or prompts. Workers cannot
+weaken their own tests. Hypothesis uses deterministic generation/shrinking and
+records actual statistics where available; stub failures are not property calibration.
+
+## Logs and resume
+
+Each operation prints its role, task, attempt and durable call ID. The run directory contains:
+
+| Path | Evidence |
+| --- | --- |
+| `manifest.json`, `artifacts.json` | Frozen input hashes, image, models, budgets and artifact inventory |
+| `source/`, `prompts/` | Original source, indexed spans, frozen prompts |
+| `spec.json`, `plan.json`, `suite.json` | Typed, validated planning and acceptance artifacts |
+| `calls/` | Prompt, raw Slick history, reservation and outcome for every attempt |
+| `tasks/`, `integration/`, `executor/` | Candidates, diagnoses, reviews, measured checks and bounded logs |
+| `report.md`, `report.json` | Run outcome and source → requirement → property → test → execution links |
+| `accepted/` | Final snapshot, created only after integration and fidelity gates |
 
 ```bash
-pip install pytest
-python -m pytest
+uv run python -m codes.workflow --resume outputs/AlphaEvolve_improved
 ```
 
-To rebuild the diagram, install a TeX distribution with TikZ and `pdftocairo`
-(Poppler), then run from the repository root:
+Resume locks the run, verifies frozen artifacts, code, prompts, dependencies and
+image, and reuses accepted tasks and checks. New settings cannot be mixed with
+`--resume`. Interrupted reservations still count; a clean pause does not consume
+active time, but unobserved downtime after a hard crash is conservatively charged.
+Stale containers belonging to that locked run are removed before continuing.
+Completed-run verification requires Docker but no API key. Incomplete runs exit
+nonzero; Ctrl-C exits 130 after cleanup and retains evidence.
+
+Cost and token measurements are `null` when unavailable, never inferred as zero.
+Reports distinguish method checks, engineering deviations and deferred empirical
+claims. Passing synthetic tests does **not** establish the paper's published scores,
+mathematical proofs, or equivalence to a larger model. Generated properties remain
+explicitly uncalibrated unless separately evaluated.
+
+## Development and evaluation
 
 ```bash
-mkdir -p /tmp/paper2code-slick-diagram
-pdflatex -interaction=nonstopmode -halt-on-error \
-    -output-directory=/tmp/paper2code-slick-diagram assets/workflow.tex
-pdftocairo -svg /tmp/paper2code-slick-diagram/workflow.pdf assets/workflow.svg
+uv run pytest
+P2C_TEST_IMAGE="$(docker image inspect paper2code-executor:local --format '{{.Id}}')" \
+  uv run pytest tests/test_docker_integration.py
+uv run python -m eval.run calibrate --output-dir outputs/evaluation/controls-new
+uv run python -m eval.run run --stage micro --output-dir outputs/evaluation/nitro-micro
 ```
 
-Commit both the `.tex` source and the rendered `.svg`; GitHub displays the SVG.
+The first command tests the controller offline; Docker checks are opt-in. The
+calibration command runs three frozen correct/fault pairs (six Docker checks),
+covering constant-output false positives, annualization and full-period scaling.
+The micro trial uses the exact GPT-OSS Nitro ID with 30 calls / 15 minutes and
+external acceptance tests withheld from model repair. Human adjudication and
+property-review judgments remain separate from automated control results.
+Component (60 calls / 30 minutes) and full (120 calls / 60 minutes) stages require
+`--paper` and a passing `--previous path/to/evaluation.json`. They currently rely
+on generated acceptance checks; their external scientific validation remains manual.
+See [evaluation notes](eval/README.md) for evidence boundaries and baseline provenance.
 
-## Origin and scope
+`codes/agent.py` owns the Slick workflow; `codes/workflow.py` owns the CLI.
+Contracts, planning validation, source indexing, storage and Docker execution
+live in their corresponding `codes/` modules. Local prompts are under
+`codes/prompts/improved/`. Convenience scripts `scripts/run.sh` and
+`scripts/run_latex.sh` use the same CLI and accept `PAPER_PATH`, `MODEL_NAME`,
+`OUTPUT_DIR`, `OUTPUT_REPO_DIR`, and `PYTHON` environment overrides.
 
-Based on *Paper2Code: Automating Code Generation from Scientific Papers in
-Machine Learning* by Minju Seo, Jinheon Baek, Seongyun Lee, and Sung Ju Hwang.
-See the [paper](https://arxiv.org/abs/2504.17192),
-[upstream repository](https://github.com/going-doer/Paper2Code), and
-[benchmark data](data/paper2code/README.md).
+Rebuild the diagram with `pdflatex` into a temporary directory, then run
+`pdftocairo -svg workflow.pdf assets/workflow.svg`; commit both the TikZ source
+and SVG. Prompt adaptations and their licenses are recorded in [NOTICE](NOTICE).
 
-This fork combines the original system and user instructions into Slick prompt
-context and changes provider settings. The original paper's benchmark results
-have not been revalidated for this implementation. The numbered pipeline,
-standalone evaluator, configuration-refinement tool, and debugger are removed.
+Based on *Paper2Code: Automating Code Generation from Scientific Papers in Machine
+Learning* ([paper](https://arxiv.org/abs/2504.17192),
+[upstream](https://github.com/going-doer/Paper2Code)). Original benchmark results
+have not been revalidated for this workflow.

@@ -132,6 +132,7 @@ class Review(BaseModel, extra="forbid"):
 
 
 class Diagnosis(BaseModel, extra="forbid"):
+    category: Literal["implementation", "test", "spec", "infrastructure"]
     hypothesis: Text
     evidence_artifacts: list[Text] = Field(min_length=1)
     affected_paths: list[Text] = Field(min_length=1)
@@ -195,6 +196,7 @@ class TaskRecord(BaseModel, extra="forbid"):
     check_artifacts: list[str] = Field(default_factory=list)
     review_artifacts: list[str] = Field(default_factory=list)
     candidate_artifact: str = ""
+    diagnosis_artifact: str = ""
     blocker: str = ""
 
 
@@ -237,6 +239,7 @@ class ExecutionResult(BaseModel, extra="forbid"):
     collected_tests: int | None = None
     property_statistics: dict = Field(default_factory=dict)
     replay_complete: bool = True
+    failed_nodes: list[str] = Field(default_factory=list)
 
 
 class RunnerReport(BaseModel, extra="forbid", strict=True):
@@ -249,3 +252,37 @@ class RunnerReport(BaseModel, extra="forbid", strict=True):
     skipped: list[str]
     errors: list[str]
     property_statistics: dict = Field(default_factory=dict)
+
+
+class RequirementEvidence(BaseModel, extra="forbid"):
+    status: Literal[
+        "tested_method",
+        "tested_domain",
+        "tested_engineering_choice",
+        "deferred_empirical",
+        "unresolved",
+    ]
+    sources: list[SourceRef]
+    property_ids: list[str]
+    node_ids: list[str]
+    execution_artifacts: list[str]
+    rationale: str
+
+
+class RunReport(BaseModel, extra="forbid"):
+    outcome: Literal["complete", "incomplete", "failed", "cancelled"]
+    generation_complete: bool
+    tests_verified: bool
+    integration_verified: bool
+    requirements: dict[str, RequirementEvidence]
+    properties: dict[str, PropertySpec]
+    calibration: dict[str, Literal["uncalibrated"]]
+    deviations: list[str]
+    blocked_tasks: dict[str, str]
+    calls_reserved: int
+    active_seconds: float
+    measured_cost: float | None
+    input_hashes: dict[str, str]
+    image_id: str
+    models: dict[str, str]
+    error: str

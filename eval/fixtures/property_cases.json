@@ -1,0 +1,7 @@
+[
+  {"id":"shift-volatility","property":"Adding a finite constant preserves sample volatility in bounded real inputs, within justified floating-point tolerance.","expected":"valid","basis":"Differences from the mean are unchanged."},
+  {"id":"constant-volatility","property":"Shift invariance alone establishes correct volatility.","expected":"invalid","basis":"An always-zero function satisfies the relation; an independent nonconstant anchor is required."},
+  {"id":"annualization","property":"Annualized volatility is daily volatility times 252.","expected":"invalid","basis":"For a specified 252-period variance convention, standard deviation scales by sqrt(252)."},
+  {"id":"train-only","property":"Train-only normalization is literal reproduction of a paper explicitly using all-time extrema.","expected":"invalid","basis":"Train-only normalization must be declared an engineering deviation."},
+  {"id":"unspecified-scale","property":"The paper's normalization is correct.","expected":"ambiguous","basis":"Need the normalization formula, fit period and source span."}
+]

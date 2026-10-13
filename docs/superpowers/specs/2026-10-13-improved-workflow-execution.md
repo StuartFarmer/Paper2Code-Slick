@@ -49,7 +49,7 @@ Proposed files: `docker/Dockerfile`, `docker/requirements.lock`,
 
 - Base: `python:3.11-slim`; resolve and record the exact image ID/digest and native
   architecture at build time. Test ARM64 on this Mac; avoid x86 emulation by default.
-- First profile: pytest, NumPy, pandas, SciPy, PyYAML, and CPU-only PyTorch for
+- First profile: pytest, Hypothesis, NumPy, pandas, SciPy, PyYAML, and CPU-only PyTorch for
   constructor/training smoke. Pin tested dependency versions and hashes in the
   executor lock during implementation, not speculative versions in this plan.
 - Install dependency layers before copying `docker/check.py`; do not copy the
@@ -133,6 +133,38 @@ or `sys.exit(0)` before collection is not a passing suite. Unit-test the result
 parser against missing/truncated reports. Record `infrastructure_error` separately
 from a failed scientific assertion.
 
+### Property-test profile and evidence
+
+Before importing acceptance tests, the trusted runner loads a pinned Hypothesis
+profile: `max_examples=100`, `derandomize=True`, `database=None`, `deadline=None`,
+`print_blob=True`, explicit/generate/shrink phases, health checks unsuppressed.
+These are initial engineering defaults to calibrate, not measured optima. Keep
+plugin autoload disabled and explicitly load `-p hypothesispytest` plus the
+trusted result plugin; verify that entry point in the pinned image. Generated
+tests cannot provide plugins or unapproved per-test profile overrides.
+
+Bound strategies' shapes and magnitudes and reset mutable state per case.
+`max_examples` does not cap all executions, and shrinking can take additional
+time; the existing Docker deadline remains the hard boundary. Record profile,
+Python/Hypothesis/library versions, architecture and RNG settings. Deterministic
+generation does not control external randomness or guarantee cross-version replay.
+
+Capture per-node valid/invalid counts and stop reason where supported, health
+and flakiness failures, and failing inputs/replay text in bounded evidence.
+Unknown statistics remain null; a small exhausted finite domain can be valid.
+Timeout, unsatisfiable generators or health-check failures cannot satisfy a
+property. Truncated counterexample evidence is marked incomplete. Adjudicated
+regressions may become explicit examples only through reviewed suite revision
+and invalidation; no writable shared Hypothesis database is mounted.
+
+Curated correct-reference and semantic-fault checks use separately hashed
+snapshots through this same runner. A relevant assertion failure counts as a
+detected fault; import errors, crashes and resource failures are inconclusive.
+No mutation framework or runtime dependency installer is added. Initial external
+calibration is capped at six reference/fault pairs (12 checks), sharing existing
+active-time and concurrency limits. Uncalibrated properties are reported honestly.
+See [research and primary sources](../../research_property_fidelity/integration.md).
+
 Tests and production code share a Python process for ordinary pytest checks.
 They are therefore not a cryptographic defense against deliberately adversarial
 code fabricating results. Read-only suites, trusted runner/config, review, and
@@ -179,3 +211,20 @@ CLI success is exit 0 only for a fully accepted and integration-verified run;
 blocked, budget-exhausted, and failed runs exit nonzero with a report path.
 SIGINT returns 130 after cleanup. When documenting `tee`, enable shell `pipefail`
 so a logger's successful exit does not hide workflow failure.
+
+## Implementation status (2026-10-13)
+
+The verified V1 controller, CLI, Docker executor, prompts and offline evaluation
+fixtures are implemented on `improved`. Use the current README for executable
+commands. Task 11's paid GPT-OSS stages and independent human adjudication have
+not run; an OpenRouter key is absent in the development environment.
+
+Implementation amendments: `codes/agent.py` owns the workflow and
+`codes/workflow.py` the CLI; `run_verified` handles exceptions outside Slick's
+restricted workflow syntax. The initial CPU wheel lock is Linux ARM64.
+Oversized interface registries or indivisible packets block instead of silently
+truncating evidence; automatic pairwise repartition is not implemented. Test/spec
+corrections require a new reviewed run; only implementation/schema repair is
+automatic. Component/full trial scientific adjudication remains manual.
+These boundaries narrow the original plan and are not evidence that its entire
+evaluation ladder or all proposed acceptance cases have been completed.

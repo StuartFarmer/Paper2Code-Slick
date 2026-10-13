@@ -104,3 +104,43 @@ def test_fake_docker_inspects_before_removal(tmp_path, monkeypatch):
     assert result.status == "passed"
     commands = [json.loads(line)[0] for line in log.read_text().splitlines()]
     assert commands == ["run", "inspect", "rm"]
+
+
+def test_snapshot_publication_is_atomic_on_write_failure(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from codes.execution import materialize_snapshot
+
+    original = Path.write_text
+
+    def fail(path, *args, **kwargs):
+        if path.name == "b.py":
+            raise OSError("disk failure")
+        return original(path, *args, **kwargs)
+
+    root = tmp_path / "snapshot"
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "write_text", fail)
+        with pytest.raises(OSError):
+            materialize_snapshot(root, {"a.py": "x=1", "b.py": "x=2"})
+    assert not root.exists()
+    materialize_snapshot(root, {"a.py": "x=1", "b.py": "x=2"})
+    assert (root / "b.py").read_text() == "x=2"
+
+
+def test_cleanup_targets_only_the_locked_run(monkeypatch):
+    import subprocess
+
+    from codes.execution import cleanup_run
+
+    calls = []
+
+    def command(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "p2c-orphan\n" if "ps" in argv else "", "")
+
+    monkeypatch.setattr(subprocess, "run", command)
+    cleanup_run("run123")
+    assert "label=paper2code.run=run123" in calls[0]
+    assert "label=paper2code.executor=true" in calls[0]
+    assert calls[1] == ["docker", "rm", "--force", "p2c-orphan"]

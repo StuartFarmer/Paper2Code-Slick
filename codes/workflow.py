@@ -1,240 +1,179 @@
-"""Reproduce a paper through planning, per-file analysis, and sequential coding."""
+"""Generate and verify a paper implementation using bounded OpenRouter calls."""
 
 import argparse
 import asyncio
 import json
-import re
-from pathlib import Path, PurePosixPath
+import os
+import subprocess
+import sys
+import uuid
+from importlib.metadata import version
+from pathlib import Path
 
-from pydantic import BaseModel, Field
-from slick import Session, prompt, prompts, workflow
-from slick.providers import ClaudeCLI, CodexCLI, OpenRouterAPI, Provider
+from slick import prompts
+from slick.providers import OpenRouterAPI
 
-from .paper import load_paper
+from .agent import OPERATIONS, PaperCoder, run_verified
+from .contracts import Limits, RunManifest
+from .execution import cleanup_run, run_check
+from .paper import Excerpt, PaperIndex, index_paper
+from .store import RunStore, digest
 
-
-class Tasks(BaseModel):
-    files: list[str] = Field(alias="Task list", min_length=1)
-    descriptions: list[tuple[str, str]] = Field(alias="Logic Analysis")
-
-
-def parse_content(text: str) -> dict:
-    """Parse the JSON contract inside the paper's response delimiters."""
-    return json.loads(text.strip().removeprefix("[CONTENT]").removesuffix("[/CONTENT]"))
-
-
-def output_path(root: Path, filename: str) -> Path:
-    """Confine model-supplied paths, including existing symlinks, to the output root."""
-    relative = PurePosixPath(filename)
-    if (
-        not filename
-        or relative.is_absolute()
-        or "\\" in filename
-        or any(part in ("", ".", "..") or part.startswith(".") for part in filename.split("/"))
-    ):
-        raise ValueError(f"Unsafe generated filename: {filename!r}")
-    target = root / filename
-    if not target.resolve().is_relative_to(root.resolve()):
-        raise ValueError(f"Generated filename escapes output directory: {filename!r}")
-    current = target
-    while current != root:
-        if current.is_symlink():
-            raise ValueError(f"Generated filename follows a symlink: {filename!r}")
-        current = current.parent
-    return target
+ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_MODEL = "openai/gpt-oss-120b:nitro"
 
 
-def write_text(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-
-
-class PaperCoder:
-    """One run per instance; no generation retries or execution of generated code.
-
-    Planning shares a Session. Analysis and coding each use fresh sessions.
-    Raw exchanges survive validation failures; existing output files are replaced.
-    Configure slick.prompts.TEMPLATE_ROOT before starting the workflow.
-    """
-
-    def __init__(
-        self,
-        paper: str,
-        paper_format: str,
-        provider: Provider,
-        output_dir: Path,
-        output_repo_dir: Path,
-    ):
-        self.paper = paper
-        self.paper_format = paper_format
-        self.provider = provider
-        self.output_dir = output_dir
-        self.output_repo_dir = output_repo_dir
-
-    @prompt(template="overview.j2", max_turns=1)
-    async def plan_overview(self) -> str:
-        """Outline the reproduction strategy."""
-
-    @prompt(template="design.j2", max_turns=1)
-    async def plan_design(self) -> str:
-        """Design the files and interfaces."""
-
-    @prompt(template="tasks.j2", max_turns=1)
-    async def plan_tasks(self) -> str:
-        """Order files by their dependencies."""
-
-    @prompt(template="config.j2", max_turns=1)
-    async def plan_config(self) -> str:
-        """Extract the paper's configuration."""
-
-    @prompt(template="analyze.j2", max_turns=1)
-    async def analyze_file(self, filename: str, draft_desc: str) -> str:
-        """Analyze one file independently."""
-
-    @prompt(template="code.j2", max_turns=1)
-    async def code_file(
-        self,
-        filename: str,
-        analysis: str,
-        code_files: str,
-        done_file_lst: list[str],
-    ) -> str:
-        """Implement one file with previously generated code in context."""
-
-    @workflow
-    async def run(self) -> Path:
-        await self.plan()
-        analyses = await self.analyze()
-        await self.code(analyses)
-        return self.output_repo_dir
-
-    async def plan(self) -> None:
-        session = Session(provider=self.provider)
-        self.overview = await self._invoke(self.plan_overview, session=session, record="planning")
-        self.design = await self._invoke(self.plan_design, session=session, record="planning")
-        self.tasks_text = await self._invoke(self.plan_tasks, session=session, record="planning")
-        tasks_data = parse_content(self.tasks_text)
-        tasks = Tasks.model_validate(tasks_data)
-        if len(set(tasks.files)) != len(tasks.files):
-            raise ValueError("Duplicate files in generated task list")
-        self.files = [name for name in tasks.files if name != "config.yaml"]
-        self.descriptions = dict(tasks.descriptions)
-        for name in ["config.yaml", *self.files]:
-            output_path(self.output_repo_dir, name)
-            output_path(self.output_dir / "analysis", name + ".txt")
-        raw = await self._invoke(self.plan_config, session=session, record="planning")
-        match = re.search(r"```yaml\s*\n(.*?)\n```", raw, re.DOTALL)
-        if not match or not match[1].strip():
-            raise ValueError("Configuration response must contain a nonempty YAML code block")
-        self.config = match[1] + "\n"
-        write_text(output_path(self.output_repo_dir, "config.yaml"), self.config)
-        artifacts = self.output_dir / "planning"
-        for name, text in [
-            ("overview.txt", self.overview),
-            ("design.json", json.dumps(parse_content(self.design), indent=2)),
-            ("tasks.json", json.dumps(tasks_data, indent=2)),
-            ("config.yaml", self.config),
-        ]:
-            write_text(artifacts / name, text)
-
-    async def analyze(self) -> dict[str, str]:
-        analyses = {}
-        for filename in self.files:
-            description = self.descriptions.get(filename, "")
-            draft = f"Write the logic analysis in '{filename}'."
-            if description.strip():
-                draft = f"Write the logic analysis in '{filename}', which is intended for '{description}'."
-            analyses[filename] = await self._invoke(
-                self.analyze_file,
-                filename,
-                draft,
-                record=f"analysis/{filename}",
-            )
-            path = output_path(
-                self.output_dir / "analysis",
-                filename + ".txt",
-            )
-            write_text(path, analyses[filename])
-        return analyses
-
-    async def code(self, analyses: dict[str, str]) -> None:
-        written = {}
-        for filename in self.files:
-            code_files = "".join(
-                f"\n```python\n{code}\n```\n\n"
-                for name, code in written.items()
-                if not name.endswith(".yaml")
-            )
-            raw = await self._invoke(
-                self.code_file,
-                filename,
-                analyses[filename],
-                code_files,
-                ["config.yaml", *written],
-                record=f"coding/{filename}",
-            )
-            match = re.search(r"^```(?:\w+)?\s*\n(.*?)(?=^```)```", raw, re.DOTALL | re.MULTILINE)
-            code = match[1] if match and match[1] else raw
-            write_text(output_path(self.output_repo_dir, filename), code)
-            written[filename] = code
-
-    async def _invoke(self, operation, *args, record: str, session: Session | None = None) -> str:
-        session = session or Session(provider=self.provider)
-        print(f"{operation.__name__}: {args[0] if args else 'paper'}", flush=True)
-        try:
-            text = await operation(*args, session=session)
-            text = text.split("</think>")[-1]
-            if not text.strip():
-                raise ValueError("Model returned an empty response")
-            return text
-        except Exception as error:
-            write_text(
-                self.output_dir / "failure.json",
-                json.dumps(
-                    {
-                        "operation": operation.__name__,
-                        "record": record,
-                        "error": f"{type(error).__name__}: {error}",
-                    },
-                    indent=2,
-                ),
-            )
-            raise
-        finally:
-            # Save raw text before downstream parsing, including rejected responses.
-            write_text(
-                output_path(self.output_dir / "calls", f"{record}.json"),
-                json.dumps(session.history, indent=2),
-            )
-
-
-def main(argv=None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("paper", type=Path, help="PDF extraction JSON, Markdown, or LaTeX source")
-    parser.add_argument(
-        "--model",
-        default="codex",
-        help="codex (default), claude, or an OpenRouter model ID such as anthropic/claude-sonnet-4.5",
+def executor_image(name: str) -> tuple[str, str]:
+    result = subprocess.run(
+        ["docker", "image", "inspect", name], capture_output=True, text=True, timeout=30, check=True
     )
-    parser.add_argument("--output-dir", type=Path, default=Path("outputs/Transformer"))
-    parser.add_argument("--output-repo-dir", type=Path, default=Path("outputs/Transformer_repo"))
-    args = parser.parse_args(argv)
-    if args.model == "codex":
-        provider = CodexCLI(timeout=600)
-    elif args.model == "claude":
-        provider = ClaudeCLI(
-            command='claude -p --output-format text --tools "" --strict-mcp-config --permission-mode dontAsk',
-            timeout=600,
+    info = json.loads(result.stdout)[0]
+    return info["Id"], info["Os"] + "/" + info["Architecture"]
+
+
+def inputs(original: bytes) -> dict[str, str]:
+    paths = [
+        *sorted((ROOT / "codes").rglob("*.py")),
+        *sorted((ROOT / "codes/prompts/improved").glob("*.j2")),
+        ROOT / "uv.lock",
+        ROOT / "docker/requirements.lock",
+        ROOT / "docker/check.py",
+        ROOT / "docker/Dockerfile",
+    ]
+    hashes = {str(p.relative_to(ROOT)): digest(p.read_bytes()) for p in paths}
+    hashes["paper"] = digest(original)
+    hashes["runtime"] = digest(
+        json.dumps(
+            {p: version(p) for p in ("slick-ai", "pydantic", "Jinja2")}, sort_keys=True
+        ).encode()
+    )
+    return hashes
+
+
+async def preflight_templates(coder: PaperCoder) -> None:
+    for name in [*OPERATIONS, "repair_schema"]:
+        await getattr(coder, name).render(coder, {})
+
+
+def restored_index(store: RunStore) -> PaperIndex:
+    fields = json.loads(store.read_artifact("source/index.json"))
+    fields["locations"] = {int(k): v for k, v in fields["locations"].items()}
+    fields["excerpts"] = [Excerpt(**e) for e in fields["excerpts"]]
+    return PaperIndex(original=store.read_artifact("source/original.txt").encode(), **fields)
+
+
+def run(store: RunStore, index: PaperIndex) -> int:
+    templates = ROOT / "codes/prompts/improved"
+    for path in sorted(templates.glob("*.j2")):
+        name = "prompts/improved/" + path.name
+        if name not in store.artifacts:
+            store.save_artifact(name, path.read_text())
+    prompts.TEMPLATE_ROOT = store.root / "prompts"
+    limits = store.manifest.limits
+    providers = {
+        role: OpenRouterAPI(
+            model=model,
+            timeout=limits.call_timeout,
+            max_output_tokens=limits.output_tokens,
+            max_retries=0,
         )
-    elif "/" in args.model:
-        provider = OpenRouterAPI(model=args.model, timeout=600, max_output_tokens=32768)
-    else:
-        parser.error("--model must be codex, claude, or an OpenRouter model ID (provider/model)")
-    prompts.TEMPLATE_ROOT = Path(__file__).resolve().parent / "prompts"
-    paper, paper_format = load_paper(args.paper)
-    coder = PaperCoder(paper, paper_format, provider, args.output_dir, args.output_repo_dir)
-    print(f"Repository saved to {asyncio.run(coder.run())}")
+        for role, model in store.manifest.models.items()
+    }
+    coder = PaperCoder(
+        store,
+        providers["worker"],
+        planner=providers["planner"],
+        reviewer=providers["reviewer"],
+        executor=run_check,
+    )
+    asyncio.run(preflight_templates(coder))
+    if store.manifest.outcome != "complete" and not os.environ.get("OPENROUTER_API_KEY"):
+        raise ValueError("Set OPENROUTER_API_KEY before starting or resuming an incomplete run")
+    output = asyncio.run(run_verified(coder, index))
+    print(f"Report: {store.root / 'report.md'}")
+    if output:
+        print(f"Repository saved to {output}")
+        return 0
+    return 1
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("paper", nargs="?", type=Path, help="JSON, Markdown, or LaTeX source")
+    parser.add_argument(
+        "--resume", type=Path, help="Resume a frozen run without overriding its settings"
+    )
+    parser.add_argument("--model", help=f"OpenRouter provider/model ID (default: {DEFAULT_MODEL})")
+    parser.add_argument("--planner-model")
+    parser.add_argument("--reviewer-model")
+    parser.add_argument(
+        "--executor-image", help="Locally built Docker image (default: paper2code-executor:local)"
+    )
+    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--output-repo-dir", type=Path)
+    for flag in ("concurrency", "test-concurrency", "max-calls", "run-timeout"):
+        parser.add_argument("--" + flag, type=int)
+    args = parser.parse_args(argv)
+    if args.resume and any(v is not None for k, v in vars(args).items() if k != "resume"):
+        parser.error("--resume cannot be combined with a paper or new-run settings")
+    if not args.resume and not args.paper:
+        parser.error("Provide a paper or --resume RUN_DIRECTORY")
+    for model in (args.model, args.planner_model, args.reviewer_model):
+        if model is not None and (
+            "/" not in model or not all(model.split("/", 1)) or any(c.isspace() for c in model)
+        ):
+            parser.error(
+                "Verified V1 requires an OpenRouter provider/model ID; codex and claude CLI aliases are unsupported"
+            )
+    try:
+        if args.resume:
+            with RunStore.open(args.resume) as store:
+                index = restored_index(store)
+                if inputs(index.original) != store.manifest.input_hashes:
+                    raise ValueError(
+                        "Source code, prompts, or dependencies changed; create a new run"
+                    )
+                image_id, platform = executor_image(store.manifest.image_id)
+                if (image_id, platform) != (store.manifest.image_id, store.manifest.platform):
+                    raise ValueError("Executor changed; create a new run")
+                cleanup_run(store.manifest.run_id)
+                return run(store, index)
+        index = index_paper(args.paper)
+        root = (args.output_dir or Path("outputs/Transformer")).resolve()
+        repo = (args.output_repo_dir or Path("outputs/Transformer_repo")).resolve()
+        if root == repo or root in repo.parents or repo in root.parents:
+            raise ValueError("Run and export directories must be distinct and not nested")
+        if root.exists() or repo.exists():
+            raise FileExistsError("Use unused output directories, or --resume for an existing run")
+        if not os.environ.get("OPENROUTER_API_KEY"):
+            raise ValueError("Set OPENROUTER_API_KEY before starting a run")
+        limits = Limits(
+            **{k: v for k, v in vars(args).items() if k in Limits.model_fields and v is not None}
+        )
+        image_id, platform = executor_image(args.executor_image or "paper2code-executor:local")
+        model = args.model or DEFAULT_MODEL
+        manifest = RunManifest(
+            run_id=uuid.uuid4().hex,
+            input_hashes=inputs(index.original),
+            image_id=image_id,
+            platform=platform,
+            models={
+                "worker": model,
+                "planner": args.planner_model or model,
+                "reviewer": args.reviewer_model or model,
+            },
+            output_repo=str(repo),
+            limits=limits,
+        )
+        with RunStore.create(root, manifest) as store:
+            return run(store, index)
+    except KeyboardInterrupt:
+        print("Cancelled; evidence retained. Resume with --resume RUN_DIRECTORY.", file=sys.stderr)
+        return 130
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        print(f"Paper2Code: {error}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

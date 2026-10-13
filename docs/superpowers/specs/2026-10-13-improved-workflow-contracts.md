@@ -30,6 +30,8 @@ class Requirement(BaseModel, extra="forbid"):
     id: Text
     statement: Text
     basis: Literal["paper", "engineering_choice", "unresolved"]
+    claim_kind: Literal["method", "mathematical", "empirical"]
+    verification_scope: Literal["v1_required", "deferred_empirical"]
     sources: list[SourceRef]
     rationale: str
     acceptance_criteria: list[Text] = Field(min_length=1)
@@ -80,6 +82,9 @@ Controller checks:
   requirements require evidence. An engineering choice needs a rationale;
   unsupported paper claims cannot silently become facts.
 - Requirement, task, and interface IDs are unique and all references resolve.
+- Only empirical claims can be `deferred_empirical`, with an explicit rationale
+  recording missing data/protocol/evidence. Scope freezes with the plan; deferral
+  cannot satisfy the original claim or resolve a blocking method ambiguity.
 - Every binding requirement has an owning task or an explicit blocking/deviation
   entry. Each produced interface has one owner. Consumers depend transitively on
   that owner. Unresolved requirements used by tasks block dispatch.
@@ -121,8 +126,22 @@ WorkerReply = Annotated[
 ]
 
 
+class PropertySpec(BaseModel, extra="forbid"):
+    id: Text
+    requirement_ids: list[Text] = Field(min_length=1)
+    node_ids: list[Text] = Field(min_length=1)
+    kind: Literal["example", "invariant", "metamorphic", "differential"]
+    justification: Text
+    domain_and_preconditions: Text
+    relation: Text
+    oracle_basis: Literal["hand_derived", "independent_reference", "necessary_relation"]
+    oracle_evidence: Text
+    tolerance: Text
+
+
 class TestSuite(BaseModel, extra="forbid"):
     files: list[FileContent] = Field(min_length=1)
+    properties: list[PropertySpec] = Field(min_length=1)
     task_targets: dict[str, list[Text]]
     integration_targets: list[Text]
 
@@ -132,6 +151,8 @@ class Finding(BaseModel, extra="forbid"):
     severity: Literal["blocking", "advisory"]
     category: Literal["spec", "interface", "behavior", "test", "quality"]
     requirement_ids: list[Text]
+    property_ids: list[Text]
+    evidence_artifact_ids: list[Text]
     artifact: Text
     line: int | None = Field(default=None, ge=1)
     observation: Text
@@ -183,6 +204,16 @@ skip/xfail, vacuous assertions, and unsupported assumptions. Python preflight
 rejects obvious skip/xfail markers; code review and external fixtures remain
 necessary because syntax scans cannot establish test quality.
 
+Property IDs are unique across fragments. Their requirement and node IDs must
+resolve inside the fragment's permitted scope, and every required behavior must
+have a property-to-execution link. An `example` is sufficient where generated
+properties add no value. Evidence quotes remain on requirements; do not duplicate
+them. Validate reference artifacts exist and hash them before freezing. Python
+checks links and results; the reviewer checks whether the relationship follows
+from the sources, preconditions and declared engineering choices. It cannot infer
+semantic validity from a nonempty field. See the
+[research synthesis](../../research_property_fidelity/integration.md).
+
 Wrap every generated record in controller-owned metadata: call ID, role/model,
 task ID, attempt, input hash, output hash, and timestamps. Never accept a model's
 claim of having run a command as an `ExecutionResult`.
@@ -201,6 +232,15 @@ and tool-result boundaries, not additional model prompt outputs.
 | `RunManifest` | `schema_version`, `run_id`, source/code/prompt/lock/plan hashes, image ID/platform, role model IDs, limits, timestamps, journal sequence, accepted snapshot hash, run outcome. No secret values. |
 | `CallRecord` | `id`, role/model, task/attempt, prompt and raw-response artifact paths, times, status, input bytes, optional measured token usage/cost, optional clearly labelled estimates. Failed/cancelled/unknown calls count. |
 | `RunReport` | generation/test/integration outcomes, requirement-to-evidence mapping, deviations/unresolved requirements, blocked tasks, measured checks/cost/duration, provenance links. |
+
+Extend `ExecutionResult` with optional property statistics and replay-artifact
+references: valid/invalid case counts, stop reason, health/flakiness outcome and
+counterexample completeness. Unknown counts stay null. The trusted runner owns
+these values; model prose is not execution evidence. `RunManifest` also freezes
+the Hypothesis profile and dependency versions. `RunReport` maps requirement ->
+property -> node -> matching execution and lists deferred empirical claims.
+Calibration uses the existing `CheckSpec`/`ExecutionResult` records on separately
+hashed reference/fault fixtures, not another execution backend or result schema.
 
 Task states: `pending -> ready -> implementing -> checking -> reviewing -> accepted`.
 From checking/reviewing, `repairing` can return to implementing; any active state
@@ -240,6 +280,27 @@ file exists.
 }
 ```
 
-This example is an engineering invariant for the AlphaEvolve evaluation. The
-requirement's source/rationale must be established before it is labelled as an
-explicit paper claim. Its actual array signatures belong in `Interface` records.
+This example is an engineering deviation, not literal AlphaEvolve replication:
+the supplied `paper/main.tex:301` explicitly normalizes over all time steps. It
+requires `basis=engineering_choice`, `claim_kind=method`,
+`verification_scope=v1_required`, a rationale and a recorded deviation from the paper. A literal
+replication task instead tests the stated full-period maximum. Never enforce
+both incompatible contracts on one implementation. Actual array signatures
+belong in `Interface` records.
+
+## Implementation status (2026-10-13)
+
+The verified V1 controller, CLI, Docker executor, prompts and offline evaluation
+fixtures are implemented on `improved`. Use the current README for executable
+commands. Task 11's paid GPT-OSS stages and independent human adjudication have
+not run; an OpenRouter key is absent in the development environment.
+
+Implementation amendments: `codes/agent.py` owns the workflow and
+`codes/workflow.py` the CLI; `run_verified` handles exceptions outside Slick's
+restricted workflow syntax. The initial CPU wheel lock is Linux ARM64.
+Oversized interface registries or indivisible packets block instead of silently
+truncating evidence; automatic pairwise repartition is not implemented. Test/spec
+corrections require a new reviewed run; only implementation/schema repair is
+automatic. Component/full trial scientific adjudication remains manual.
+These boundaries narrow the original plan and are not evidence that its entire
+evaluation ladder or all proposed acceptance cases have been completed.

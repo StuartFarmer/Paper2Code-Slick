@@ -1,0 +1,19 @@
+Prompt provenance
+
+Local prompts adapt workflow principles from the sources below.
+No external skill discovery or execution is required at runtime.
+
+Superpowers: https://github.com/obra/superpowers/tree/bb92a77741419a4ab5f06e711a283343f1ada0c3
+MIT; see third_party/superpowers-LICENSE.
+
+trailofbits: https://github.com/trailofbits/skills/blob/442fc9d6c89b1e937e6f7a477e7071ea75fcbea4/plugins/property-based-testing/skills/property-based-testing/SKILL.md
+SHA256: 9448cacb65c6237a7c22dc59602667177ecae405524079ae9ff92240590b995a
+License: CC-BY-SA-4.0; see third_party/trailofbits-LICENSE.
+The adapted property-testing instructions in codes/prompts/improved/author_tests.j2
+and codes/prompts/improved/review_tests.j2 are licensed CC-BY-SA-4.0. Changes:
+bounded scientific domains, source-to-property links, independent numeric anchors,
+and controller-owned execution replace the upstream interactive security workflow.
+
+kdense: https://github.com/K-Dense-AI/scientific-agent-skills/blob/a1043ef544e3a100c28e70a736b6cf32554d0677/skills/scientific-critical-thinking/SKILL.md
+SHA256: 563af70571b7dcd6a96bf2e303bedfdcba623b4e9f082d58f04aacbc961fdae4
+License: MIT; see third_party/kdense-LICENSE.

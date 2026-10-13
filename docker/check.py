@@ -30,7 +30,6 @@ def main():
             not path.startswith("tests/acceptance/") or "::" not in target
         ):
             raise ValueError("Unregistered acceptance node")
-    sys.path.insert(0, "/workspace")
     outcome = {
         "kind": kind,
         "targets": targets,
@@ -48,6 +47,7 @@ def main():
                 compile((Path("/workspace") / target).read_bytes(), target, "exec")
             outcome["exit_code"] = 0
         elif kind == "imports":
+            sys.path.insert(0, "/workspace")
             for target in targets:
                 importlib.import_module(target)
             outcome["exit_code"] = 0
@@ -55,6 +55,8 @@ def main():
             import pytest
             from _hypothesis_pytestplugin import STATS_KEY
             from hypothesis import Phase, settings
+
+            sys.path.insert(0, "/workspace")
 
             profile = {
                 "max_examples": 100,
@@ -116,6 +118,7 @@ def main():
                         "/runner/pytest.ini",
                         "--rootdir=/acceptance",
                         "--noconftest",
+                        "--import-mode=importlib",
                         "-p",
                         "no:cacheprovider",
                         "-p",

@@ -5,7 +5,7 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 
 exec "${PYTHON:-python}" -m codes.workflow \
     "${PAPER_PATH:-examples/Transformer_cleaned.tex}" \
-    --model "${MODEL_NAME:-codex}" \
+    --model "${MODEL_NAME:-openai/gpt-oss-120b:nitro}" \
     --output-dir "${OUTPUT_DIR:-outputs/Transformer}" \
     --output-repo-dir "${OUTPUT_REPO_DIR:-outputs/Transformer_repo}" \
     "$@"

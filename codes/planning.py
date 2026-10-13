@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .contracts import Extraction, PaperSpec, Review, TaskPlan, TestSuite
 from .paper import PaperIndex
-from .workflow import output_path
+from .paths import output_path
 
 
 def unique(items, label: str) -> dict:
@@ -56,6 +56,13 @@ def validate_plan(spec: PaperSpec, plan: TaskPlan) -> None:
     upstream = ancestors(plan)
     paths, producers, covered = {}, {}, set()
     for requirement in spec.requirements:
+        if (
+            requirement.claim_kind == "empirical"
+            and requirement.verification_scope == "v1_required"
+        ):
+            raise ValueError(
+                f"V1 synthetic checks cannot establish empirical results: {requirement.id}"
+            )
         if requirement.basis == "paper" and not requirement.sources:
             raise ValueError(f"Missing paper evidence: {requirement.id}")
         if requirement.basis == "engineering_choice" and not requirement.rationale.strip():
