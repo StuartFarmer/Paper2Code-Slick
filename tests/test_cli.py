@@ -49,7 +49,7 @@ def test_cli_preserves_nitro_suffix_and_resume_reuses_evidence(tmp_path, monkeyp
     assert all(o["model"] == "openai/gpt-oss-120b:nitro" and o["max_retries"] == 0 for o in options)
     monkeypatch.delenv("OPENROUTER_API_KEY")
     assert workflow.main(["--resume", str(root)]) == 0
-    assert len(provider.contexts) == 3
+    assert len(provider.contexts) == 4
     assert json.loads((root / "manifest.json").read_text())["outcome"] == "complete"
 
 

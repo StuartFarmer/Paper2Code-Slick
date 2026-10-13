@@ -27,6 +27,15 @@ class Revision(BaseModel):
     notes: str = ""
 
 
+class NotebookCell(BaseModel):
+    cell_type: Literal["markdown", "code"]
+    source: str = Field(min_length=1)
+
+
+class Notebook(BaseModel):
+    cells: list[NotebookCell] = Field(min_length=1)
+
+
 class Limits(BaseModel):
     concurrency: int = Field(default=4, ge=1, le=16)
     max_calls: int = Field(default=120, ge=1)

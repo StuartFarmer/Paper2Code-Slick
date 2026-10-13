@@ -247,13 +247,15 @@ def test_real_test_failure_drives_repair_and_recheck(tmp_path, monkeypatch):
     paper, settings, responses = case(tmp_path)
     settings.image_id = os.environ["P2C_TEST_IMAGE"]
     responses[1] = "def f(x): return 0\n"
-    responses.append(json.dumps({"files": [{"path": "a.py", "content": "def f(x): return x*x\n"}]}))
+    responses.insert(
+        3, json.dumps({"files": [{"path": "a.py", "content": "def f(x): return x*x\n"}]})
+    )
     provider = ScriptedProvider(responses)
     with RunStore.create(tmp_path / "run", settings) as store:
         output = asyncio.run(run_workflow(PaperCoder(store, provider), paper))
         assert (output / "a.py").read_text() == "def f(x): return x*x\n"
         assert store.manifest.outcome == "complete" and store.manifest.fixes == 1
-        assert "assert 0 == 9" in provider.contexts[-1]
+        assert "assert 0 == 9" in provider.contexts[3]
         results = [json.loads(p.read_text()) for p in (store.root / "checks").rglob("result.json")]
         assert sorted(r["status"] for r in results) == ["failed", "passed", "passed", "passed"]
 
@@ -274,7 +276,7 @@ def test_broken_acceptance_keeps_real_generated_draft(tmp_path, monkeypatch):
     paper, settings, responses = case(tmp_path)
     settings.image_id = os.environ["P2C_TEST_IMAGE"]
     responses[2] = "import missing_test_dependency\ndef test_value(): pass\n"
-    responses.append(json.dumps({"files": [], "notes": "Test dependency is unavailable"}))
+    responses.insert(3, json.dumps({"files": [], "notes": "Test dependency is unavailable"}))
     with RunStore.create(tmp_path / "run", settings) as store:
         coder = PaperCoder(store, ScriptedProvider(responses))
         output = asyncio.run(run_workflow(coder, paper))

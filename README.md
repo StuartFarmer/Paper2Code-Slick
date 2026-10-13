@@ -1,10 +1,10 @@
 # Paper2Code-Slick
 
-Turn a JSON, Markdown, or LaTeX paper into a Python repository with Slick.
-Make a small plan, generate files, run tests, and try up to two repairs. Keep the
-code even when verification fails.
+Turn a JSON, Markdown, or LaTeX paper into a Python repository and an experiment
+notebook with Slick. Make a small plan, generate files, run tests, try up to two
+repairs, then write the notebook. Keep the code even when verification fails.
 
-![Plan, generate files in parallel, test in Docker, repair, and return the repository.](assets/workflow.svg)
+![Plan, generate files in parallel, test in Docker, repair, and export the experiment notebook and repository.](assets/workflow.svg)
 
 [TikZ source](assets/workflow.tex)
 
@@ -63,18 +63,27 @@ This branch currently uses OpenRouter rather than Codex/Claude CLI providers.
    and branch coverage of production Python files, including unimported modules.
 4. **Repair:** actual failure logs go directly to a repair prompt. It investigates
    the cause and returns changed production files. Run tests again, at most twice.
-5. **Return:** export all generated files and the tests, with a report of what passed
+5. **Notebook:** one fresh-context call uses the paper, plan, final code and test
+   status to write `experiment.ipynb`. Its cells import the implementation, configure
+   and conduct the experiment, calculate metrics, plot results, and discuss the
+   comparison with the paper. Small demonstrations and missing data/compute must
+   be clearly identified. The notebook is generated, **not executed** by the pipeline.
+6. **Return:** export the notebook, generated files and tests, with a report of what passed
    and what remains unfinished. Successful files survive failed sibling workers,
    model errors, budget exhaustion, and cancellation.
 
 Superpowers contributes prompt guidance: small tasks, explicit APIs, self-review,
 root-cause debugging, and checking results before claiming success. These are
 instructions to the model, not additional controller gates. The plan and repair
-file bundles use small Pydantic schemas with feedback-based JSON repair; code and
-tests are plain text. Unsafe paths remain rejected. Repairs cannot rewrite tests.
+file bundles and notebook cells use small Pydantic schemas with feedback-based
+JSON repair; code and tests are plain text. Unsafe paths remain rejected. Repairs
+cannot rewrite tests or the separately authored notebook.
 
-`complete` means all planned files exist and generated tests passed; it does not
-establish scientific reproduction. `draft` means files exist with unresolved work.
+`complete` means all planned files and the notebook exist and generated tests passed;
+it does not establish that notebook cells ran or scientific results were reproduced.
+`draft` means files exist with unresolved work. A notebook-generation failure keeps
+the implementation and tests as a draft. Earlier model errors, cancellation, or
+exhausted budgets may prevent the notebook step from being reached.
 The CLI exits zero when it returns complete or draft code, nonzero when no repository
 was produced, and 130 on Ctrl-C. The micro evaluation separately judges correctness
 using external tests withheld from the workflow.
@@ -93,6 +102,27 @@ Generation concurrency defaults to 4 (`--concurrency`). Use `--max-calls` and
 Malformed structured responses get up to two corrections; production code gets up
 to two repair passes. There is no automatic switch to a larger model.
 
+## Run the experiment notebook
+
+The final deliverable is `<export_path>/experiment.ipynb`; find the actual export
+path in `report.json`. From that repository, install its generated requirements
+(when present), plus JupyterLab and matplotlib in your chosen environment. For example:
+
+```bash
+cd outputs/AlphaEvolve_simple_repo
+uv venv .venv
+uv pip install --python .venv/bin/python -r requirements.txt  # when present
+uv pip install --python .venv/bin/python jupyterlab matplotlib
+.venv/bin/jupyter lab experiment.ipynb
+```
+
+Read the setup and configuration cells, provide required datasets, then use **Run
+All Cells**. These cells execute in your selected Jupyter environment, outside the
+pipeline's Docker test sandbox. The notebook includes experiment code and plotting
+cells; output cells start empty. Large experiments may require additional data or
+hardware. Passing unit tests does not establish that the experiment will run or
+match the paper's published results.
+
 ## Logs and resume
 
 Each model call and Docker check prints its stage. The run directory contains:
@@ -101,13 +131,15 @@ Each model call and Docker check prints its stage. The run directory contains:
 - `generated/`: original generated files; `repairs/`: subsequent changes.
 - `calls/`: rendered prompts, raw responses, and call reservations.
 - `checks/`: Docker stdout, stderr, and results.
-- `report.md`, `report.json`: outcome, export path, warnings, errors, checks and coverage.
+- `notebooks/`: cached notebook keyed by its final code and input context.
+- `report.md`, `report.json`: outcome, export path, warnings, errors, checks, coverage,
+  and notebook path/status (`unexecuted` or `not_generated`).
 
 ```bash
 uv run python -m codes.workflow --resume outputs/AlphaEvolve_simple
 ```
 
-Resume reuses saved files and tests, and preserves call/repair budgets. Changed
+Resume reuses saved files, tests and matching notebooks, and preserves call/repair budgets. Changed
 code, prompts or dependencies require a new run. Runs from the previous strict
 workflow are incompatible; retain their logs and start in new directories. If a
 resumed result differs from an existing export, its new path is under `exports/`

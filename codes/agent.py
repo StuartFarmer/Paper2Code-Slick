@@ -1,4 +1,4 @@
-"""Plan files, write them in parallel, then test and repair the repository."""
+"""Generate and test a repository, then author its experiment notebook."""
 
 import asyncio
 import json
@@ -8,13 +8,20 @@ from pathlib import Path
 from pydantic import TypeAdapter, ValidationError
 from slick import Session, prompt, workflow
 
-from .contracts import CheckSpec, Plan, Revision
+from .contracts import CheckSpec, Notebook, Plan, Revision
 from .execution import materialize_snapshot, run_check, tree_hash
 from .paths import output_path
-from .store import RunStore, atomic_write
+from .store import RunStore, atomic_write, digest
 
 TEST_FILE = "tests/acceptance/test_generated.py"
-OPERATIONS = {"plan": Plan, "implement": str, "author_tests": str, "repair": Revision}
+NOTEBOOK_FILE = "experiment.ipynb"
+OPERATIONS = {
+    "plan": Plan,
+    "implement": str,
+    "author_tests": str,
+    "repair": Revision,
+    "author_notebook": Notebook,
+}
 
 
 def file_text(text: str) -> str:
@@ -45,12 +52,54 @@ class PaperCoder:
         self.results = []
         self.plan_value = None
         self.verified = False
+        self.notebook = ""
 
     @workflow
     async def run(self, paper: str) -> None:
         plan = await self.prepare_plan(paper)
         await self.generate(plan)
         await self.test_and_repair(paper, plan)
+        await self.create_notebook(paper, plan)
+
+    async def create_notebook(self, paper: str, plan: Plan) -> None:
+        self.notebook = ""
+        packet = {
+            "paper": paper,
+            "plan": plan.model_dump(),
+            "files": self.files,
+            "tests_verified": self.verified,
+            "warnings": self.warnings,
+        }
+        # Reuse only a notebook authored against the same final code and context.
+        key = digest(json.dumps(packet, sort_keys=True).encode())
+        artifact = f"notebooks/{key}.ipynb"
+        if artifact in self.store.artifacts:
+            self.notebook = self.store.read_artifact(artifact)
+            return
+        draft = await self.invoke("author_notebook", packet)
+        cells = []
+        for index, cell in enumerate(draft.cells):
+            value = dict(cell.model_dump(), id=f"cell-{index:04d}", metadata={})
+            if cell.cell_type == "code":
+                value.update(execution_count=None, outputs=[])
+            cells.append(value)
+        self.notebook = json.dumps(
+            {
+                "nbformat": 4,
+                "nbformat_minor": 5,
+                "metadata": {
+                    "kernelspec": {
+                        "display_name": "Python 3",
+                        "language": "python",
+                        "name": "python3",
+                    },
+                    "language_info": {"name": "python"},
+                },
+                "cells": cells,
+            },
+            indent=2,
+        )
+        self.store.save_artifact(artifact, self.notebook)
 
     async def prepare_plan(self, paper: str) -> Plan:
         if "plan.json" in self.store.artifacts:
@@ -170,6 +219,8 @@ class PaperCoder:
                 files = dict(self.files)
                 if self.tests:
                     files[TEST_FILE] = self.tests
+                if self.notebook:
+                    files[NOTEBOOK_FILE] = self.notebook
                 snapshot = self.store.root / "exports" / uuid.uuid4().hex
                 export_hash = materialize_snapshot(snapshot, files)
                 destination = Path(self.store.manifest.output_repo)
@@ -187,7 +238,7 @@ class PaperCoder:
         )
         outcome = (
             "complete"
-            if output and complete and self.verified and not error
+            if output and complete and self.verified and self.notebook and not error
             else "draft"
             if output
             else "failed"
@@ -206,6 +257,10 @@ class PaperCoder:
             "export_path": str(output) if output else "",
             "generation_complete": complete,
             "tests_verified": self.verified,
+            "notebook": {
+                "path": str(output / NOTEBOOK_FILE) if output and self.notebook else "",
+                "status": "unexecuted" if self.notebook else "not_generated",
+            },
             "warnings": self.warnings,
             "error": error,
             "calls_reserved": self.store.manifest.calls_reserved,
@@ -219,6 +274,7 @@ class PaperCoder:
             self.store.root / "report.md",
             f"# {outcome}\n\nRepository: {output}\n\nTests passed: {self.verified}\n\n"
             + f"Coverage (lines / branches): {coverage_text}\n\n"
+            + f"Notebook: {report['notebook']['path']} ({report['notebook']['status']})\n\n"
             + "\n".join([error, *self.warnings]),
         )
         return output
@@ -259,10 +315,16 @@ class PaperCoder:
                     )
 
     def validate_output(self, name, result):
+        if name == "author_notebook" and not any(
+            cell.cell_type == "code" and cell.source.strip() for cell in result.cells
+        ):
+            raise ValueError("The experiment notebook needs executable code cells")
         if name in {"plan", "repair"}:
             paths = set()
             for file in result.files:
                 output_path(Path(self.store.manifest.output_repo), file.path)
+                if file.path == NOTEBOOK_FILE or file.path.startswith(NOTEBOOK_FILE + "/"):
+                    raise ValueError("experiment.ipynb is authored separately as the final step")
                 if file.path.startswith("tests/"):
                     raise ValueError(
                         "Production files must be outside tests/; tests are authored separately"
@@ -289,6 +351,11 @@ class PaperCoder:
     @prompt(template="simple/repair.j2", output_type=Revision)
     async def repair(self, packet, *, generated) -> Revision:
         self.validate_output("repair", generated)
+        return generated
+
+    @prompt(template="simple/author_notebook.j2", output_type=Notebook)
+    async def author_notebook(self, packet, *, generated) -> Notebook:
+        self.validate_output("author_notebook", generated)
         return generated
 
     @prompt(template="simple/repair_json.j2")
