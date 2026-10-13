@@ -77,6 +77,7 @@ class ExecutionResult(BaseModel, extra="forbid"):
     output_truncated: bool
     collected_tests: int | None = None
     property_statistics: dict = Field(default_factory=dict)
+    coverage: dict = Field(default_factory=dict)
     replay_complete: bool = True
     failed_nodes: list[str] = Field(default_factory=list)
 
@@ -91,3 +92,4 @@ class RunnerReport(BaseModel, extra="forbid", strict=True):
     skipped: list[str]
     errors: list[str]
     property_statistics: dict = Field(default_factory=dict)
+    coverage: dict = Field(default_factory=dict)

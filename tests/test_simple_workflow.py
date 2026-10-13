@@ -54,6 +54,7 @@ def test_three_calls_produce_and_check_a_repository(tmp_path):
         assert [c.kind for c in executor.calls] == ["syntax", "pytest"]
         report = json.loads((store.root / "report.json").read_text())
         assert report["outcome"] == "complete" and report["tests_verified"]
+        assert responses[1].strip() in provider.contexts[2].replace("\\n", "\n")
 
 
 def test_failure_output_goes_directly_to_bounded_code_repair(tmp_path):

@@ -290,6 +290,7 @@ async def run_check(
         output_truncated=truncated,
         collected_tests=len(result["collected"]) if "collected" in result else None,
         property_statistics=result.get("property_statistics", {}),
+        coverage=result.get("coverage", {}),
         replay_complete=not truncated,
         failed_nodes=result.get("failed", []),
     )

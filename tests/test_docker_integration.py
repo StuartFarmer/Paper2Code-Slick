@@ -177,6 +177,8 @@ def test_complete_workflow_uses_real_execution(tmp_path, monkeypatch):
         report = json.loads((store.root / "report.json").read_text())
         assert report["tests_verified"]
         assert report["outcome"] == "complete"
+        assert report["coverage"]["line_percent"] == 100
+        assert "100.00% / n/a" in (store.root / "report.md").read_text()
 
 
 def test_generated_module_import_error_is_repairable(tmp_path):
@@ -191,6 +193,42 @@ def test_generated_module_import_error_is_repairable(tmp_path):
     )
     assert result.status == "failed"
     assert "bad module initialization" in Path(result.stderr_artifact).read_text()
+
+
+@pytest.mark.parametrize("include_negative, expected", [(False, 50.0), (True, 100.0)])
+def test_runner_measures_branch_coverage_without_blocking_output(
+    tmp_path, include_negative, expected
+):
+    # Arrange
+    source = "def absolute(x):\n    if x < 0:\n        return -x\n    return x\n"
+    test = "from a import absolute\ndef test_positive():\n    assert absolute(2) == 2\n"
+    if include_negative:
+        test += "def test_negative():\n    assert absolute(-2) == 2\n"
+    work, suite = staged(tmp_path, source=source, test=test)
+    spec = CheckSpec(id="tests", kind="pytest", targets=["tests/acceptance/check/test_a.py"])
+
+    # Act
+    result = asyncio.run(run_check(spec, work, suite, os.environ["P2C_TEST_IMAGE"]))
+
+    # Assert
+    assert result.status == "passed"
+    assert result.coverage["branch_percent"] == expected
+    assert result.coverage["files"]["a.py"]["missing_lines"] == ([] if include_negative else [3])
+
+
+def test_coverage_includes_unimported_modules(tmp_path):
+    # Arrange
+    work, suite = staged(tmp_path, test="def test_ok(): assert True\n")
+    (work / "unused.py").write_text("def unused():\n    return 42\n")
+    spec = CheckSpec(id="tests", kind="pytest", targets=["tests/acceptance/check/test_a.py"])
+
+    # Act
+    result = asyncio.run(run_check(spec, work, suite, os.environ["P2C_TEST_IMAGE"]))
+
+    # Assert
+    assert result.status == "passed"
+    assert result.coverage["line_percent"] == 0
+    assert result.coverage["files"]["unused.py"]["missing_lines"] == [1, 2]
 
 
 def test_real_test_failure_drives_repair_and_recheck(tmp_path, monkeypatch):

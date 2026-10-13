@@ -56,8 +56,11 @@ This branch currently uses OpenRouter rather than Codex/Claude CLI providers.
    dependency graphs, evidence schemas, or approval verdicts.
 2. **Generate:** fresh-context workers write different files in parallel. Each sees
    the overview and its own task, including the relevant equations and source details.
-3. **Test:** another call writes a small pytest file from the paper and plan. Docker
-   checks Python syntax and runs those tests against the combined repository.
+3. **Test:** another call inspects the paper, plan and generated code, then writes
+   granular pytest tests. Each test covers one behavior with explicit Arrange,
+   Act and Assert sections. Target every public function/method, branch, boundary,
+   and exception path. Docker checks syntax, runs tests, and measures statement
+   and branch coverage of production Python files, including unimported modules.
 4. **Repair:** actual failure logs go directly to a repair prompt. It investigates
    the cause and returns changed production files. Run tests again, at most twice.
 5. **Return:** export all generated files and the tests, with a report of what passed
@@ -76,6 +79,15 @@ The CLI exits zero when it returns complete or draft code, nonzero when no repos
 was produced, and 130 on Ctrl-C. The micro evaluation separately judges correctness
 using external tests withheld from the workflow.
 
+The test-generation target is 100% statement and branch coverage with meaningful
+assertions. Actual percentages, missing lines, and branch lines with uncovered exits
+are recorded under `coverage` in `report.json` and each pytest check's `result.json`.
+`report.md` shows percentages (`n/a` when no statements/branches were measurable).
+Coverage below 100% does not block export or trigger an unbounded test-writing loop.
+The initial test call aims for full coverage; gaps remain visible for follow-up.
+Coverage is measured in the pytest process; separately spawned processes are not
+tracked. Full coverage alone does not establish correctness or scientific fidelity.
+
 Generation concurrency defaults to 4 (`--concurrency`). Use `--max-calls` and
 `--run-timeout` to bound total calls and seconds. Defaults are 120 calls and one hour.
 Malformed structured responses get up to two corrections; production code gets up
@@ -89,7 +101,7 @@ Each model call and Docker check prints its stage. The run directory contains:
 - `generated/`: original generated files; `repairs/`: subsequent changes.
 - `calls/`: rendered prompts, raw responses, and call reservations.
 - `checks/`: Docker stdout, stderr, and results.
-- `report.md`, `report.json`: outcome, export path, warnings, errors and checks.
+- `report.md`, `report.json`: outcome, export path, warnings, errors, checks and coverage.
 
 ```bash
 uv run python -m codes.workflow --resume outputs/AlphaEvolve_simple
@@ -123,7 +135,7 @@ P2C_TEST_IMAGE=$(docker image inspect paper2code-executor:local --format '{{.Id}
   uv run pytest
 ```
 
-Planning and test writing see the paper; repair sees the repository. Those calls
+Planning sees the paper; test writing and repair also see the repository. Those calls
 can require more context than the per-file workers. Large-paper quality and
 published-result reproduction need separate evaluation. See [evaluation notes](eval/README.md).
 GEPA remains future work. Earlier detailed design documents under `docs/superpowers/`

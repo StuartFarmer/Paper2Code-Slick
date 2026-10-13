@@ -14,7 +14,7 @@
 \node[box] (source) at (0,0) {\textbf{1. Read paper}\\JSON, Markdown, LaTeX\\Source text};
 \node[box] (plan) at (5,0) {\textbf{2. Plan files}\\Short overview and APIs\\Instructions for each file};
 \node[box,fill=green!5] (draft) at (10,0) {\textbf{3. Write files}\\Parallel file workers\\Fresh, small contexts};
-\node[box] (tests) at (10,-3.1) {\textbf{4. Write tests}\\Paper and planned APIs\\Concrete pytest examples};
+\node[box] (tests) at (10,-3.1) {\textbf{4. Write AAA tests}\\Paper, plan, and code\\One behavior per test};
 \node[box,fill=violet!5] (verify) at (5,-3.1) {\textbf{5. Test and repair}\\Docker failure logs\\Up to two code repairs};
 \node[box,fill=green!5] (export) at (0,-3.1) {\textbf{6. Export code}\\Verified or explicitly draft\\Report failures and missing checks};
 \draw[flow] (source)--(plan); \draw[flow] (plan)--(draft);

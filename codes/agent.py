@@ -88,7 +88,7 @@ class PaperCoder:
     async def test_and_repair(self, paper: str, plan: Plan) -> None:
         if not self.tests:
             self.tests = await self.invoke(
-                "author_tests", {"paper": paper, "plan": plan.model_dump()}
+                "author_tests", {"paper": paper, "plan": plan.model_dump(), "files": self.files}
             )
             self.store.save_artifact("tests.py", self.tests)
         while True:
@@ -196,6 +196,11 @@ class PaperCoder:
             outcome = "cancelled"
         self.store.manifest.outcome = outcome
         self.store.save_manifest()
+        coverage = next((r.coverage for r in reversed(self.results) if r.coverage), {})
+        coverage_text = " / ".join(
+            f"{coverage[name]:.2f}%" if coverage.get(name) is not None else "n/a"
+            for name in ("line_percent", "branch_percent")
+        )
         report = {
             "outcome": outcome,
             "export_path": str(output) if output else "",
@@ -207,11 +212,13 @@ class PaperCoder:
             "repairs": self.store.manifest.fixes,
             "measured_cost": None,
             "checks": [r.model_dump() for r in self.results],
+            "coverage": coverage,
         }
         atomic_write(self.store.root / "report.json", json.dumps(report, indent=2))
         atomic_write(
             self.store.root / "report.md",
             f"# {outcome}\n\nRepository: {output}\n\nTests passed: {self.verified}\n\n"
+            + f"Coverage (lines / branches): {coverage_text}\n\n"
             + "\n".join([error, *self.warnings]),
         )
         return output

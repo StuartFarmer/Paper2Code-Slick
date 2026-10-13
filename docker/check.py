@@ -9,6 +9,42 @@ import traceback
 from pathlib import Path, PurePosixPath
 
 
+def coverage_report(measurement):
+    """Include unimported production files, not just modules touched by tests."""
+    files = {}
+    totals = {"statements": 0, "covered_statements": 0, "branches": 0, "covered_branches": 0}
+    for path in sorted(Path("/workspace").rglob("*.py")):
+        if "tests" in path.relative_to("/workspace").parts:
+            continue
+        _, statements, _, missing, _ = measurement.analysis2(str(path))
+        branches = measurement.branch_stats(str(path))
+        counts = {
+            "statements": len(statements),
+            "covered_statements": len(statements) - len(missing),
+            "branches": sum(total for total, _ in branches.values()),
+            "covered_branches": sum(taken for _, taken in branches.values()),
+        }
+        files[path.relative_to("/workspace").as_posix()] = {
+            **counts,
+            "missing_lines": missing,
+            "missing_branches": {
+                line: total - taken for line, (total, taken) in branches.items() if taken < total
+            },
+        }
+        for name, value in counts.items():
+            totals[name] += value
+    return {
+        **totals,
+        "line_percent": 100 * totals["covered_statements"] / totals["statements"]
+        if totals["statements"]
+        else None,
+        "branch_percent": 100 * totals["covered_branches"] / totals["branches"]
+        if totals["branches"]
+        else None,
+        "files": files,
+    }
+
+
 def main():
     spec = json.loads(sys.argv[1])
     kind, targets = spec["kind"], spec["targets"]
@@ -52,6 +88,8 @@ def main():
         else:
             import pytest
             from _hypothesis_pytestplugin import STATS_KEY
+            from coverage import Coverage
+            from coverage.exceptions import CoverageException
             from hypothesis import Phase, settings
 
             sys.path.insert(0, "/workspace")
@@ -108,6 +146,12 @@ def main():
                     elif report.when == "call":
                         outcome["passed"].append(node)
 
+            measurement = Coverage(
+                source=["/workspace"], branch=True, data_file=None, config_file=False
+            )
+            measurement.clear_exclude("exclude")
+            measurement.clear_exclude("partial")
+            measurement.start()
             plugin = Results()
             outcome["exit_code"] = int(
                 pytest.main(
@@ -129,6 +173,11 @@ def main():
                     plugins=[plugin],
                 )
             )
+            measurement.stop()
+            try:
+                outcome["coverage"] = coverage_report(measurement)
+            except CoverageException as error:
+                outcome["coverage"] = {"error": str(error)}
             if not outcome["collected"] or outcome["skipped"] or outcome["errors"]:
                 outcome["exit_code"] = outcome["exit_code"] or 1
             if outcome["exit_code"] in {2, 3, 4, 5}:

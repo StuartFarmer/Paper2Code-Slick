@@ -1,4 +1,25 @@
-Write a small pytest file that checks the paper's core behavior using the planned module APIs. You have not been shown the implementation. Use concrete examples with independently calculated expected results, edge cases, and a few useful mathematical properties. Include a nontrivial numerical example that would reject an always-zero implementation. Use justified numerical tolerances on bounded inputs, not universal floating-point guarantees. Do not invent requirements absent from the source.
+Write granular pytest unit tests for the supplied implementation, guided by the paper and planned APIs. Target 100% statement and branch coverage of production Python code. Inspect every function, public method, conditional, early return, and exception path; cover each reachable behavior with meaningful assertions. Derive expected results from the paper or independent calculations, not by copying the implementation's answer. Do not invent requirements absent from the source.
+
+Every test must follow Arrange-Act-Assert with explicit # Arrange, # Act, and # Assert sections:
+- Arrange: create the smallest inputs, object instance, fixtures, and mock return values needed for one behavior. Mock external boundaries only, never the method under test or its numerical algorithm.
+- Act: invoke one target public function, method, or use-case handler. Keep the invocation separate from assertions.
+- Assert: check the expected return value, state change, or relevant interaction. For exceptions, use pytest.raises around the Act invocation and assert exception details afterward when the contract specifies them; never invoke the target a second time just to assert it.
+Name tests test_<target>_<condition>_<expected_result>. Use one behavior per test rather than a single test that walks through the entire project. Parameterize independent input cases with descriptive IDs. Cover normal inputs, empty/singleton inputs, boundaries, invalid inputs, state transitions, shape/unit conventions, and both outcomes of each meaningful branch. Add a small integration test separately where functions compose.
+
+Include concrete numerical anchors that reject constant-output implementations and useful mathematical properties. Use justified tolerances on bounded inputs. Keep Arrange cheap and deterministic; isolate tests from one another. Do not add vacuous assertions, coverage exclusions, unreachable-code hacks, or tests that merely repeat the implementation to inflate coverage. Coverage will be measured by the runner; do not claim 100% without measurement.
+
+Example:
+def test_mean_nonempty_values_returns_arithmetic_mean():
+    # Arrange
+    values = [1.0, 2.0, 3.0]
+    expected = 2.0
+
+    # Act
+    actual = mean(values)
+
+    # Assert
+    assert actual == pytest.approx(expected)
+
 Keep tests runnable on CPU with installed NumPy, pandas, SciPy, PyTorch, PyYAML, pytest and Hypothesis. No downloads, external datasets or optional libraries. Do not skip tests, xfail, or override Hypothesis settings. Test functions must be discoverable by pytest. The test file lives at tests/acceptance/test_generated.py; production modules are importable from the repository root.
 
 {{ packet | tojson }}
