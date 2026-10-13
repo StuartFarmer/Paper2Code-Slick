@@ -8,7 +8,7 @@ from pathlib import Path, PurePosixPath
 
 from pydantic import BaseModel, Field
 from slick import Session, prompt, prompts, workflow
-from slick.providers import LiteLLMAPI, OpenAIAPI, Provider
+from slick.providers import ClaudeCLI, CodexCLI, OpenRouterAPI, Provider
 
 from .paper import load_paper
 
@@ -211,22 +211,27 @@ class PaperCoder:
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paper", type=Path, help="PDF extraction JSON or LaTeX source")
-    parser.add_argument("--model", default="o3-mini")
-    parser.add_argument("--api-base", help="OpenAI-compatible chat endpoint, e.g. a vLLM server")
+    parser.add_argument(
+        "--model",
+        default="codex",
+        help="codex (default), claude, or an OpenRouter model ID such as anthropic/claude-sonnet-4.5",
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("outputs/Transformer"))
     parser.add_argument("--output-repo-dir", type=Path, default=Path("outputs/Transformer_repo"))
     args = parser.parse_args(argv)
+    if args.model == "codex":
+        provider = CodexCLI(timeout=600)
+    elif args.model == "claude":
+        provider = ClaudeCLI(
+            command='claude -p --output-format text --tools "" --strict-mcp-config --permission-mode dontAsk',
+            timeout=600,
+        )
+    elif "/" in args.model:
+        provider = OpenRouterAPI(model=args.model, timeout=600, max_output_tokens=32768)
+    else:
+        parser.error("--model must be codex, claude, or an OpenRouter model ID (provider/model)")
     prompts.TEMPLATE_ROOT = Path(__file__).resolve().parent / "prompts"
     paper, paper_format = load_paper(args.paper)
-    if args.api_base:
-        provider = LiteLLMAPI(
-            model=f"openai/{args.model}",
-            api_base=args.api_base,
-            timeout=600,
-            options={"max_tokens": 8192},
-        )
-    else:
-        provider = OpenAIAPI(model=args.model, timeout=600, max_output_tokens=32768)
     coder = PaperCoder(paper, paper_format, provider, args.output_dir, args.output_repo_dir)
     print(f"Repository saved to {asyncio.run(coder.run())}")
 

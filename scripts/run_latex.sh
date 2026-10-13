@@ -5,7 +5,7 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 
 exec "${PYTHON:-python}" -m codes.workflow \
     "${PAPER_PATH:-examples/Transformer_cleaned.tex}" \
-    --model "${MODEL_NAME:-o3-mini}" \
+    --model "${MODEL_NAME:-codex}" \
     --output-dir "${OUTPUT_DIR:-outputs/Transformer}" \
     --output-repo-dir "${OUTPUT_REPO_DIR:-outputs/Transformer_repo}" \
     "$@"

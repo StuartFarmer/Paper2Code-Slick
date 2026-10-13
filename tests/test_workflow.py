@@ -162,8 +162,18 @@ def test_empty_generation_stops_without_writing_code(tmp_path):
     assert not (tmp_path / "repo/src/model.py").exists()
 
 
-@pytest.mark.parametrize("endpoint", [None, "http://localhost:8000/v1"])
-def test_cli_runs_with_templates_resolved_from_another_directory(tmp_path, monkeypatch, endpoint):
+@pytest.mark.parametrize(
+    "model, provider_name",
+    [
+        (None, "CodexCLI"),
+        ("codex", "CodexCLI"),
+        ("claude", "ClaudeCLI"),
+        ("anthropic/claude-sonnet-4.5", "OpenRouterAPI"),
+        ("openai/gpt-4.1", "OpenRouterAPI"),
+        ("openrouter/auto", "OpenRouterAPI"),
+    ],
+)
+def test_cli_deduces_provider_and_resolves_templates(tmp_path, monkeypatch, model, provider_name):
     from codes import workflow
 
     monkeypatch.chdir(tmp_path)
@@ -175,21 +185,78 @@ def test_cli_runs_with_templates_resolved_from_another_directory(tmp_path, monke
         options.update(kwargs)
         return provider
 
-    monkeypatch.setattr(workflow, "LiteLLMAPI" if endpoint else "OpenAIAPI", make_provider)
+    monkeypatch.setattr(workflow, provider_name, make_provider)
     (tmp_path / "paper.json").write_text('{"title": "CLI paper"}')
     args = [
         "paper.json",
-        "--model",
-        "test-model",
         "--output-dir",
         "artifacts",
         "--output-repo-dir",
         "repo",
     ]
-    if endpoint:
-        args += ["--api-base", endpoint]
+    if model is not None:
+        args += ["--model", model]
     workflow.main(args)
     assert (tmp_path / "repo/main.py").read_text() == "from src.model import Model\n"
-    assert options["model"] == ("openai/test-model" if endpoint else "test-model")
-    if endpoint:
-        assert options["api_base"] == endpoint
+    assert options["timeout"] == 600
+    if provider_name == "OpenRouterAPI":
+        assert options["model"] == model
+    else:
+        assert "model" not in options  # CLI aliases use the CLI's configured model.
+    assert all("CLI paper" in context for context in provider.contexts[:4])
+
+
+def test_unknown_model_alias_is_rejected_before_reading_paper(capsys):
+    from codes.workflow import main
+
+    with pytest.raises(SystemExit) as error:
+        main(["missing.json", "--model", "cluade"])
+    assert error.value.code == 2
+    assert "OpenRouter" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("model", ["codex", "claude"])
+def test_cli_providers_run_the_workflow_through_their_process_boundary(
+    tmp_path, monkeypatch, model
+):
+    from slick.providers import Command
+
+    from codes.workflow import main
+
+    provider = ScriptedProvider(responses())
+    commands = []
+
+    async def run_process(self, command, prompt, *, workdir):
+        commands.append(command)
+        text, _ = await provider.acall(prompt)
+        if model == "codex":
+            return (
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {"type": "agent_message", "text": text},
+                    }
+                )
+                + "\n"
+            )
+        return text
+
+    monkeypatch.setattr(Command, "_arun_process", run_process)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "paper.tex").write_text(
+        "The full paper must remain available to every planning call."
+    )
+    main(["paper.tex", "--model", model, "--output-dir", "artifacts", "--output-repo-dir", "repo"])
+    assert (tmp_path / "repo/main.py").read_text() == "from src.model import Model\n"
+    assert len(commands) == 8
+    assert all("The full paper" in context for context in provider.contexts[:4])
+    command = commands[0]
+    assert command[0] == model
+    assert "--model" not in command
+    if model == "codex":
+        assert command[1:3] == ["exec", "--json"]
+        assert command[command.index("--sandbox") + 1] == "read-only"
+    else:
+        assert command[command.index("--tools") + 1] == ""
+        assert "--strict-mcp-config" in command
+        assert command[command.index("--permission-mode") + 1] == "dontAsk"
