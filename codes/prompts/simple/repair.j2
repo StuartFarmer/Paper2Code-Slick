@@ -1,0 +1,8 @@
+Improve this implementation using the actual execution failures below.
+First read the failure and locate its cause. Check the source, planned APIs, and current files before changing anything. Make the smallest production-code change that fixes the cause; preserve working behavior. Inspect imports and interactions between files. Do not replace the algorithm with constants, weaken requirements, or claim success without another test run.
+Return complete contents for changed/new production files only. Do not modify tests or runner configuration. If the test itself is wrong or a dependency is unavailable, explain that in notes and return no changes rather than distort the implementation to pass. The controller will run the tests again and retain code even if they fail.
+
+{{ packet | tojson }}
+
+Return only JSON matching this schema:
+{{ schema | tojson }}

@@ -2,30 +2,16 @@ import asyncio
 import json
 
 import pytest
-from test_contracts import spec_plan
 
-from codes.contracts import Candidate, CheckSpec
-from codes.execution import docker_argv, parse_report, run_check, stage_candidate
+from codes.contracts import CheckSpec
+from codes.execution import docker_argv, materialize_snapshot, parse_report, run_check
 
 
-def test_candidate_requires_exact_owned_files_and_confined_paths(tmp_path):
-    _, plan = spec_plan()
-    task = plan.tasks[0]
-    for path in ["../escape.py", ".git/config", "b.py"]:
+def test_snapshot_rejects_unsafe_generated_paths(tmp_path):
+    for i, path in enumerate(["../escape.py", ".git/config", "/tmp/escape.py"]):
         with pytest.raises(ValueError):
-            stage_candidate(
-                task,
-                Candidate(kind="candidate", files=[{"path": path, "content": "x"}], notes=""),
-                tmp_path / "bad",
-            )
-    candidate = Candidate(kind="candidate", files=[{"path": "a.py", "content": "x=1\n"}], notes="")
-    sha = stage_candidate(task, candidate, tmp_path / "snapshot")
-    assert len(sha) == 64 and (tmp_path / "snapshot/a.py").read_text() == "x=1\n"
-    with pytest.raises(FileExistsError):
-        stage_candidate(task, candidate, tmp_path / "snapshot")
-    candidate.files[0].content = "λ" * 9000
-    with pytest.raises(ValueError):
-        stage_candidate(task, candidate, tmp_path / "large")
+            materialize_snapshot(tmp_path / str(i), {path: "x"})
+    assert not (tmp_path / "escape.py").exists()
 
 
 def test_fixed_container_controls_and_spaced_paths(tmp_path):

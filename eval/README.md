@@ -24,13 +24,13 @@ Its manifest hashes the dirty source actually used, rather than pretending HEAD
 alone identifies it. Pass `--baseline path/to/manifest.json` to bind a trial to that
 baseline. This directory is ignored and is not distributed with the repository.
 
-Current component/full evaluation uses generated tests plus fidelity review. There
+Current component/full evaluation uses generated tests. There
 is no external paper-specific empirical oracle yet; promotion is procedural evidence,
 not published-result reproduction. A genuine small/large × old/new comparison needs
 repeated trials, fixed external checks and independently adjudicated outcomes. No
 stronger model is selected automatically. GEPA belongs to V2.
 
 Generation now runs before verification. A complete draft is returned even if model
-reviews disagree or generated test preparation fails. The micro evaluator judges
+calls or generated test preparation fail. The micro evaluator judges
 that draft using its frozen external checks; `workflow_outcome` preserves the
 pipeline's own status separately from the micro evaluation outcome.

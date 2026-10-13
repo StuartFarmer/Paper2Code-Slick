@@ -1,3 +1,6 @@
+> Historical design: superseded by the simple plan → files → tests → repair workflow.
+> See the repository README for current behavior.
+
 # Improved Paper2Code workflow
 
 > Current behavior amendment: the user requested useful imperfect code rather than

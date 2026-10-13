@@ -8,7 +8,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from .contracts import CallRecord, RunManifest, TaskRecord
+from .contracts import RunManifest
 from .paths import output_path
 
 
@@ -125,20 +125,22 @@ class RunStore:
         self.manifest.calls_reserved += 1
         self.save_manifest()
         call_id = f"call-{self.manifest.calls_reserved:05d}"
-        call = CallRecord(
-            id=call_id,
-            role=role,
-            model=self.manifest.models.get(role, ""),
-            task_id=task_id,
-            attempt=self.manifest.calls_reserved,
-            started=time.time(),
+        self.save_artifact(
+            f"calls/{call_id}/reservation.json",
+            json.dumps(
+                {
+                    "role": role,
+                    "task": task_id,
+                    "model": self.manifest.models.get(role, ""),
+                    "started": time.time(),
+                }
+            ),
         )
-        self.save_artifact(f"calls/{call_id}/reservation.json", call.model_dump_json(indent=2))
         return call_id
 
     def save_artifact(self, relative_path: str, content: str) -> str:
         path = output_path(self.root, relative_path)
-        if path.name in {
+        if relative_path in {
             "manifest.json",
             "artifacts.json",
             "state.json",
@@ -163,19 +165,3 @@ class RunStore:
         if digest(content) != expected:
             raise ValueError(f"Artifact hash mismatch: {name}")
         return content.decode("utf-8")
-
-    def save_task(self, record: TaskRecord) -> None:
-        if "/" in record.task_id:
-            raise ValueError("Task ID cannot contain directories")
-        path = output_path(self.root, f"tasks/{record.task_id}/state.json")
-        atomic_write(path, record.model_dump_json(indent=2) + "\n")
-        self.event("task_state", task=record.task_id, state=record.state)
-
-    def load_task(self, task_id: str) -> TaskRecord:
-        return TaskRecord.model_validate_json(
-            output_path(self.root, f"tasks/{task_id}/state.json").read_text()
-        )
-
-    def event(self, kind: str, **fields) -> None:
-        with (self.root / "events.jsonl").open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps({"kind": kind, "time": time.time(), **fields}) + "\n")

@@ -11,15 +11,7 @@ import time
 import uuid
 from pathlib import Path
 
-from .contracts import (
-    Candidate,
-    CheckSpec,
-    ExecutionResult,
-    PaperSpec,
-    RunnerReport,
-    TaskPlan,
-    TaskSpec,
-)
+from .contracts import CheckSpec, ExecutionResult, RunnerReport
 from .paths import output_path
 from .store import digest
 
@@ -53,24 +45,6 @@ def cleanup_run(run_id: str) -> None:
         subprocess.run(
             ["docker", "rm", "--force", name], capture_output=True, timeout=30, check=True
         )
-
-
-def contract_scaffolds(spec: PaperSpec, plan: TaskPlan) -> dict[str, str]:
-    files = {path: "" for task in plan.tasks for path in task.owned_paths}
-    for interface in spec.interfaces:
-        module = interface.module.replace(".", "/")
-        path = module + ".py" if module + ".py" in files else module + "/__init__.py"
-        if path not in files or not interface.symbol.isidentifier():
-            raise ValueError(f"Interface needs a simple owned module/symbol: {interface.id}")
-        if interface.symbol[0].isupper():
-            files[path] += (
-                f"class {interface.symbol}:\n    def __init__(self, *args, **kwargs):\n        raise NotImplementedError('contract scaffold')\n\n"
-            )
-        else:
-            files[path] += (
-                f"def {interface.symbol}(*args, **kwargs):\n    raise NotImplementedError('contract scaffold')\n\n"
-            )
-    return files
 
 
 def materialize_snapshot(root: Path, files: dict[str, str]) -> str:
@@ -112,30 +86,6 @@ def tree_hash(root: Path) -> str:
     return digest(json.dumps(files, sort_keys=True).encode())
 
 
-def stage_candidate(
-    task: TaskSpec,
-    candidate: Candidate,
-    workspace: Path,
-    *,
-    dependencies: dict[str, str] | None = None,
-) -> str:
-    if workspace.exists():
-        raise FileExistsError(workspace)
-    files = {f.path: f.content for f in candidate.files}
-    if len(files) != len(candidate.files) or set(files) != set(task.owned_paths):
-        raise ValueError("Candidate must supply exactly its owned files")
-    if (
-        any(len(c.encode()) > 16384 for c in files.values())
-        or sum(len(c.encode()) for c in files.values()) > 32768
-    ):
-        raise ValueError("Candidate exceeds file/bundle byte budget")
-    dependencies = dependencies or {}
-    if files.keys() & dependencies.keys():
-        raise ValueError("Candidate overlaps dependency files")
-    files = {**dependencies, **files}
-    return materialize_snapshot(workspace, files)
-
-
 def docker_argv(check: CheckSpec, workspace: Path, suite: Path, image: str, name: str) -> list[str]:
     if not image.startswith("sha256:"):
         raise ValueError("Execution requires a resolved immutable image ID")
@@ -148,10 +98,8 @@ def docker_argv(check: CheckSpec, workspace: Path, suite: Path, image: str, name
             output_path(Path("/targets"), path)
             if not path.endswith(".py"):
                 raise ValueError("Only Python check targets are supported")
-            if check.kind in {"pytest", "smoke"} and (
-                not path.startswith("tests/acceptance/") or "::" not in target
-            ):
-                raise ValueError("Acceptance checks require registered node IDs")
+            if check.kind in {"pytest", "smoke"} and (not path.startswith("tests/acceptance/")):
+                raise ValueError("Tests must live under tests/acceptance/")
     for path in (workspace, suite):
         if "," in str(path):
             raise ValueError("Docker bind mount paths cannot contain commas")
@@ -218,7 +166,8 @@ def parse_report(output: str, check: CheckSpec) -> dict:
         raise ValueError("Runner report does not match registered check")
     if check.kind in {"pytest", "smoke"}:
         if not result["collected"] or not all(
-            any(n == t or n.startswith(t + "[") for n in result["collected"]) for t in check.targets
+            any(n == t or n.startswith((t + "[", t + "::")) for n in result["collected"])
+            for t in check.targets
         ):
             raise ValueError("Required tests were not collected")
         if result["exit_code"] == 0 and (
@@ -291,7 +240,7 @@ async def run_check(
     try:
         await asyncio.wait_for(process.wait(), check.timeout_seconds)
         _, state = await control("inspect", "--format", "{{json .State}}", name)
-        oom = json.loads(state or b"{}").get("OOMKilled", False)
+        oom = json.loads(state.strip() or b"{}").get("OOMKilled", False)
         if oom:
             status = "oom"
         else:

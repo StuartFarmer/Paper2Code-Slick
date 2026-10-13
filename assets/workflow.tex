@@ -9,16 +9,16 @@
  box/.style={draw=ink!30,rounded corners=5pt,align=center,text width=4.1cm,minimum height=1.5cm,fill=blue!4},
  flow/.style={->,draw=ink,line width=.9pt},
  background rectangle/.style={fill=white},show background rectangle]
-\node[font=\Large\bfseries] at (5,2.2) {Generate first, then verify and improve};
+\node[font=\Large\bfseries] at (5,2.2) {Plan, write, test, repair};
 \node[align=center,text=ink!75] at (5,1.5) {One Slick workflow / fresh contexts / bounded budgets};
-\node[box] (source) at (0,0) {\textbf{1. Index source}\\JSON, Markdown, LaTeX\\Quotes and source spans};
-\node[box] (plan) at (5,0) {\textbf{2. Plan}\\Requirements and APIs\\Review issues become warnings};
-\node[box,fill=green!5] (draft) at (10,0) {\textbf{3. Generate drafts}\\Parallel ready tasks\\Build on upstream drafts};
-\node[box] (tests) at (10,-3.1) {\textbf{4. Independent tests}\\Author cannot see code\\Freeze usable tests};
-\node[box,fill=violet!5] (verify) at (5,-3.1) {\textbf{5. Check and improve}\\Docker checks and fresh reviews\\Up to two code repairs};
+\node[box] (source) at (0,0) {\textbf{1. Read paper}\\JSON, Markdown, LaTeX\\Source text};
+\node[box] (plan) at (5,0) {\textbf{2. Plan files}\\Short overview and APIs\\Instructions for each file};
+\node[box,fill=green!5] (draft) at (10,0) {\textbf{3. Write files}\\Parallel file workers\\Fresh, small contexts};
+\node[box] (tests) at (10,-3.1) {\textbf{4. Write tests}\\Paper and planned APIs\\Concrete pytest examples};
+\node[box,fill=violet!5] (verify) at (5,-3.1) {\textbf{5. Test and repair}\\Docker failure logs\\Up to two code repairs};
 \node[box,fill=green!5] (export) at (0,-3.1) {\textbf{6. Export code}\\Verified or explicitly draft\\Report failures and missing checks};
 \draw[flow] (source)--(plan); \draw[flow] (plan)--(draft);
 \draw[flow] (draft)--(tests); \draw[flow] (tests)--(verify); \draw[flow] (verify)--(export);
-\node[align=center,text width=14cm,text=ink!75] at (5,-5) {Verification failure does not discard generated code.\\Unsafe paths and ownership conflicts are still rejected; all execution stays in Docker.};
+\node[align=center,text width=14cm,text=ink!75] at (5,-5) {Superpowers guides the prompts; no model approval gates.\\Retain generated code and report failures. Execute only in Docker.};
 \end{tikzpicture}
 \end{document}

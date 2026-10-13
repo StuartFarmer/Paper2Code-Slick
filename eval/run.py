@@ -181,6 +181,9 @@ def evaluate(
                 workflow_outcome=run["outcome"],
                 calls_reserved=run["calls_reserved"],
                 measured_cost=run["measured_cost"],
+                error=run.get("error", ""),
+                warnings=run.get("warnings", []),
+                export_path=run.get("export_path", str(root / "repo")),
             )
         if code == 0 and stage == "micro":
             result = asyncio.run(
@@ -190,7 +193,7 @@ def evaluate(
                         kind="pytest",
                         targets=["tests/acceptance/holdout/test_micro.py::test_method"],
                     ),
-                    root / "repo",
+                    Path(report["export_path"]),
                     suite,
                     image[0],
                     evidence_dir=root / "external-check",

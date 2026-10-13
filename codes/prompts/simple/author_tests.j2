@@ -1,0 +1,6 @@
+Write a small pytest file that checks the paper's core behavior using the planned module APIs. You have not been shown the implementation. Use concrete examples with independently calculated expected results, edge cases, and a few useful mathematical properties. Include a nontrivial numerical example that would reject an always-zero implementation. Use justified numerical tolerances on bounded inputs, not universal floating-point guarantees. Do not invent requirements absent from the source.
+Keep tests runnable on CPU with installed NumPy, pandas, SciPy, PyTorch, PyYAML, pytest and Hypothesis. No downloads, external datasets or optional libraries. Do not skip tests, xfail, or override Hypothesis settings. Test functions must be discoverable by pytest. The test file lives at tests/acceptance/test_generated.py; production modules are importable from the repository root.
+
+{{ packet | tojson }}
+
+Return ONLY the Python test code without Markdown fences or commentary. Do not use tools or run commands.

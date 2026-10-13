@@ -1,3 +1,6 @@
+> Historical design: superseded by the simple plan → files → tests → repair workflow.
+> See the repository README for current behavior.
+
 # Improved Paper2Code implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax. Implementation was subsequently authorized by “can we begin development?”.

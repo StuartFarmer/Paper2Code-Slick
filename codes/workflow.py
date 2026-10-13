@@ -1,4 +1,4 @@
-"""Generate and verify a paper implementation using bounded OpenRouter calls."""
+"""Plan, generate, test and repair a paper implementation with Slick."""
 
 import argparse
 import asyncio
@@ -13,10 +13,10 @@ from pathlib import Path
 from slick import prompts
 from slick.providers import OpenRouterAPI
 
-from .agent import OPERATIONS, PaperCoder, run_verified
+from .agent import OPERATIONS, PaperCoder, run_workflow
 from .contracts import Limits, RunManifest
 from .execution import cleanup_run, run_check
-from .paper import Excerpt, PaperIndex, index_paper
+from .paper import load_paper
 from .store import RunStore, digest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,7 +34,7 @@ def executor_image(name: str) -> tuple[str, str]:
 def inputs(original: bytes) -> dict[str, str]:
     paths = [
         *sorted((ROOT / "codes").rglob("*.py")),
-        *sorted((ROOT / "codes/prompts/improved").glob("*.j2")),
+        *sorted((ROOT / "codes/prompts/simple").glob("*.j2")),
         ROOT / "uv.lock",
         ROOT / "docker/requirements.lock",
         ROOT / "docker/check.py",
@@ -51,21 +51,14 @@ def inputs(original: bytes) -> dict[str, str]:
 
 
 async def preflight_templates(coder: PaperCoder) -> None:
-    for name in [*OPERATIONS, "repair_schema"]:
+    for name in [*OPERATIONS, "repair_json"]:
         await getattr(coder, name).render(coder, {})
 
 
-def restored_index(store: RunStore) -> PaperIndex:
-    fields = json.loads(store.read_artifact("source/index.json"))
-    fields["locations"] = {int(k): v for k, v in fields["locations"].items()}
-    fields["excerpts"] = [Excerpt(**e) for e in fields["excerpts"]]
-    return PaperIndex(original=store.read_artifact("source/original.txt").encode(), **fields)
-
-
-def run(store: RunStore, index: PaperIndex) -> int:
-    templates = ROOT / "codes/prompts/improved"
+def run(store: RunStore, paper: str) -> int:
+    templates = ROOT / "codes/prompts/simple"
     for path in sorted(templates.glob("*.j2")):
-        name = "prompts/improved/" + path.name
+        name = "prompts/simple/" + path.name
         if name not in store.artifacts:
             store.save_artifact(name, path.read_text())
     prompts.TEMPLATE_ROOT = store.root / "prompts"
@@ -83,13 +76,12 @@ def run(store: RunStore, index: PaperIndex) -> int:
         store,
         providers["worker"],
         planner=providers["planner"],
-        reviewer=providers["reviewer"],
         executor=run_check,
     )
     asyncio.run(preflight_templates(coder))
     if store.manifest.outcome != "complete" and not os.environ.get("OPENROUTER_API_KEY"):
         raise ValueError("Set OPENROUTER_API_KEY before starting or resuming an incomplete run")
-    output = asyncio.run(run_verified(coder, index))
+    output = asyncio.run(run_workflow(coder, paper))
     print(f"Report: {store.root / 'report.md'}")
     if output:
         print(f"Repository saved to {output} ({store.manifest.outcome})")
@@ -105,31 +97,31 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--model", help=f"OpenRouter provider/model ID (default: {DEFAULT_MODEL})")
     parser.add_argument("--planner-model")
-    parser.add_argument("--reviewer-model")
     parser.add_argument(
         "--executor-image", help="Locally built Docker image (default: paper2code-executor:local)"
     )
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--output-repo-dir", type=Path)
-    for flag in ("concurrency", "test-concurrency", "max-calls", "run-timeout"):
+    for flag in ("concurrency", "max-calls", "run-timeout"):
         parser.add_argument("--" + flag, type=int)
     args = parser.parse_args(argv)
     if args.resume and any(v is not None for k, v in vars(args).items() if k != "resume"):
         parser.error("--resume cannot be combined with a paper or new-run settings")
     if not args.resume and not args.paper:
         parser.error("Provide a paper or --resume RUN_DIRECTORY")
-    for model in (args.model, args.planner_model, args.reviewer_model):
+    for model in (args.model, args.planner_model):
         if model is not None and (
             "/" not in model or not all(model.split("/", 1)) or any(c.isspace() for c in model)
         ):
             parser.error(
-                "Verified V1 requires an OpenRouter provider/model ID; codex and claude CLI aliases are unsupported"
+                "This workflow requires an OpenRouter provider/model ID; codex and claude CLI aliases are unsupported"
             )
     try:
         if args.resume:
             with RunStore.open(args.resume) as store:
-                index = restored_index(store)
-                if inputs(index.original) != store.manifest.input_hashes:
+                paper = store.read_artifact("source/paper.txt")
+                original = store.read_artifact("source/original.txt").encode()
+                if inputs(original) != store.manifest.input_hashes:
                     raise ValueError(
                         "Source code, prompts, or dependencies changed; create a new run"
                     )
@@ -137,8 +129,14 @@ def main(argv=None) -> int:
                 if (image_id, platform) != (store.manifest.image_id, store.manifest.platform):
                     raise ValueError("Executor changed; create a new run")
                 cleanup_run(store.manifest.run_id)
-                return run(store, index)
-        index = index_paper(args.paper)
+                if store.manifest.outcome == "complete":
+                    print(f"Repository saved to {store.manifest.export_path} (complete)")
+                    return 0
+                return run(store, paper)
+        paper, _ = load_paper(args.paper)
+        original = args.paper.read_bytes()
+        if not paper.strip():
+            raise ValueError("Paper contains no text")
         root = (args.output_dir or Path("outputs/Transformer")).resolve()
         repo = (args.output_repo_dir or Path("outputs/Transformer_repo")).resolve()
         if root == repo or root in repo.parents or repo in root.parents:
@@ -154,19 +152,20 @@ def main(argv=None) -> int:
         model = args.model or DEFAULT_MODEL
         manifest = RunManifest(
             run_id=uuid.uuid4().hex,
-            input_hashes=inputs(index.original),
+            input_hashes=inputs(original),
             image_id=image_id,
             platform=platform,
             models={
                 "worker": model,
                 "planner": args.planner_model or model,
-                "reviewer": args.reviewer_model or model,
             },
             output_repo=str(repo),
             limits=limits,
         )
         with RunStore.create(root, manifest) as store:
-            return run(store, index)
+            store.save_artifact("source/paper.txt", paper)
+            store.save_artifact("source/original.txt", original.decode())
+            return run(store, paper)
     except KeyboardInterrupt:
         print("Cancelled; evidence retained. Resume with --resume RUN_DIRECTORY.", file=sys.stderr)
         return 130

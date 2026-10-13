@@ -2,7 +2,7 @@ import json
 
 import pytest
 from providers import ScriptedExecutor, ScriptedProvider
-from test_verified_workflow import case
+from test_simple_workflow import case
 
 from codes import workflow
 
@@ -16,7 +16,9 @@ def test_unbounded_cli_backends_rejected_before_reading_paper(model, capsys):
 
 
 def test_cli_preserves_nitro_suffix_and_resume_reuses_evidence(tmp_path, monkeypatch):
-    paper, _, responses = case(tmp_path)
+    source, _, responses = case(tmp_path)
+    paper = tmp_path / "paper.md"
+    paper.write_text(source)
     provider = ScriptedProvider(responses)
     options = []
 
@@ -26,7 +28,7 @@ def test_cli_preserves_nitro_suffix_and_resume_reuses_evidence(tmp_path, monkeyp
 
     monkeypatch.setattr(workflow, "OpenRouterAPI", make_provider)
     monkeypatch.setattr(workflow, "executor_image", lambda name: ("sha256:image", "linux/arm64"))
-    monkeypatch.setattr(workflow, "run_check", ScriptedExecutor(["failed", "failed"]))
+    monkeypatch.setattr(workflow, "run_check", ScriptedExecutor())
     monkeypatch.setattr(workflow, "cleanup_run", lambda run_id: None)
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-not-a-real-key")
     root = tmp_path / "run"
@@ -47,7 +49,7 @@ def test_cli_preserves_nitro_suffix_and_resume_reuses_evidence(tmp_path, monkeyp
     assert all(o["model"] == "openai/gpt-oss-120b:nitro" and o["max_retries"] == 0 for o in options)
     monkeypatch.delenv("OPENROUTER_API_KEY")
     assert workflow.main(["--resume", str(root)]) == 0
-    assert len(provider.contexts) == 11
+    assert len(provider.contexts) == 3
     assert json.loads((root / "manifest.json").read_text())["outcome"] == "complete"
 
 

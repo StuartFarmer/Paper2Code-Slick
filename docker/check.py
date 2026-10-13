@@ -26,10 +26,8 @@ def main():
             or not path.endswith(".py")
         ):
             raise ValueError("Invalid check path")
-        if kind in {"pytest", "smoke"} and (
-            not path.startswith("tests/acceptance/") or "::" not in target
-        ):
-            raise ValueError("Unregistered acceptance node")
+        if kind in {"pytest", "smoke"} and (not path.startswith("tests/acceptance/")):
+            raise ValueError("Test path must be under tests/acceptance/")
     outcome = {
         "kind": kind,
         "targets": targets,

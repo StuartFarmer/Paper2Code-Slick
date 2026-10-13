@@ -1,8 +1,6 @@
-import json
-
 import pytest
 
-from codes.contracts import Limits, RunManifest, TaskRecord
+from codes.contracts import Limits, RunManifest
 from codes.store import BudgetExceeded, RunStore
 
 
@@ -27,6 +25,9 @@ def test_lock_collision_immutable_artifacts_and_integrity(tmp_path):
             RunStore.open(root)
         artifact = store.save_artifact("source/paper.txt", "evidence")
         assert store.read_artifact(artifact) == "evidence"
+        store.save_artifact("generated/manifest.json", "{}")
+        with pytest.raises(ValueError, match="Reserved"):
+            store.save_artifact("manifest.json", "{}")
         with pytest.raises(FileExistsError):
             store.save_artifact(artifact, "replacement")
         with pytest.raises(ValueError):
@@ -36,17 +37,13 @@ def test_lock_collision_immutable_artifacts_and_integrity(tmp_path):
         RunStore.open(root)
 
 
-def test_resume_preserves_unknown_calls_and_task_state(tmp_path):
+def test_resume_preserves_unknown_calls(tmp_path):
     root = tmp_path / "run"
     with RunStore.create(root, manifest()) as store:
         first = store.reserve_call("worker", "a")
-        store.save_task(TaskRecord(task_id="a", plan_hash="p", state="pending"))
         store.save_artifact("candidates/orphan.py", "print('not accepted')")
-    with (root / "events.jsonl").open("a") as stream:
-        stream.write('{"partial":')
     with RunStore.open(root, expected_hashes={"prompts": "abc"}) as store:
         assert store.manifest.calls_reserved == 1
-        assert store.load_task("a").state == "pending"
         second = store.reserve_call("worker", "a")
         assert first != second
         with pytest.raises(BudgetExceeded):
@@ -68,35 +65,6 @@ def test_time_budget_survives_resume_and_excludes_clean_pause(tmp_path, monkeypa
         clock[0] += 3591
         with pytest.raises(BudgetExceeded):
             store.check_budget()
-
-
-def test_failed_state_publication_preserves_old_authoritative_state(tmp_path, monkeypatch):
-    root = tmp_path / "run"
-    with RunStore.create(root, manifest()) as store:
-        store.save_task(TaskRecord(task_id="a", plan_hash="p", state="pending"))
-
-        def crash(*args):
-            raise OSError("simulated crash before rename")
-
-        with monkeypatch.context() as patch:
-            patch.setattr("codes.store.os.replace", crash)
-            with pytest.raises(OSError):
-                store.save_task(TaskRecord(task_id="a", plan_hash="p", state="checking"))
-        assert store.load_task("a").state == "pending"
-    state = json.loads((root / "tasks/a/state.json").read_text())
-    assert state["state"] == "pending"
-
-
-def test_crash_after_commit_does_not_erase_state(tmp_path, monkeypatch):
-    with RunStore.create(tmp_path / "run", manifest()) as store:
-
-        def fail_journal(*args, **kwargs):
-            raise OSError("journal write failed after transaction")
-
-        monkeypatch.setattr(store, "event", fail_journal)
-        with pytest.raises(OSError):
-            store.save_task(TaskRecord(task_id="a", plan_hash="p", state="checking"))
-        assert store.load_task("a").state == "checking"
 
 
 def test_identical_artifact_recovers_crash_before_inventory(tmp_path):
