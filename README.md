@@ -33,19 +33,36 @@ read-only mounts, and resource limits. Checks cannot download datasets or depend
 
 ```bash
 uv run python -m codes.workflow \
-  /Users/stuart/Developer/AI/arXiv-2103.16196v2/paper/main.tex \
-  --model openai/gpt-oss-120b:nitro \
-  --output-dir outputs/AlphaEvolve_simple \
-  --output-repo-dir outputs/AlphaEvolve_simple_repo \
-  2>&1 | tee AlphaEvolve_simple.log
+  sources/arXiv-1302.6927v1/arma_arxiv.tex
 ```
 
-Inputs are extracted `.json`, Markdown, or LaTeX files, not PDFs or directories.
-LaTeX includes are not expanded: provide consolidated source when the method spans
-multiple files. Both output directories must be unused for a new run.
+Point at the main `.tex` in an extracted arXiv source download. Local literal
+`\input{...}` and `\include{...}` references are expanded recursively, including
+`\input filename`. Files are resolved from the main file's directory, then the
+including fragment's directory. Includes stay within the main file's directory
+tree; missing, cyclic, or unsupported macro-based references are left in the text
+with a warning. TeX commands are never executed. Markdown and extracted `.json`
+are also accepted; PDFs and directories are not.
 
-Defaults: `openai/gpt-oss-120b:nitro`, `outputs/Transformer`, and
-`outputs/Transformer_repo`. Model names are OpenRouter provider/model IDs;
+The default model is `openai/gpt-oss-120b:nitro`. Outputs go to
+`outputs/<paper filename without extension>/`, with code and `experiment.ipynb`
+inside `repo/`. For the command above, that's `outputs/arma_arxiv/repo/`.
+Repeated runs automatically use `arma_arxiv-2`, `arma_arxiv-3`, etc. The CLI prints
+the selected paths before generation. Existing runs are preserved.
+
+Output flags remain optional. This nested layout also works:
+
+```bash
+uv run python -m codes.workflow sources/arXiv-1302.6927v1/arma_arxiv.tex \
+  --output-dir outputs/arXiv-1302.6927 \
+  --output-repo-dir outputs/arXiv-1302.6927/repo
+```
+
+An explicit `--output-dir` must be unused; omit `--output-repo-dir` to default to
+its `repo/` child. Separate export directories still work. Exports cannot overlap
+the run's internal state or contain the run directory.
+
+Model names are OpenRouter provider/model IDs;
 `:nitro` is preserved. `--planner-model` optionally changes the planning/test model.
 This branch currently uses OpenRouter rather than Codex/Claude CLI providers.
 
@@ -109,7 +126,7 @@ path in `report.json`. From that repository, install its generated requirements
 (when present), plus JupyterLab and matplotlib in your chosen environment. For example:
 
 ```bash
-cd outputs/AlphaEvolve_simple_repo
+cd outputs/arma_arxiv/repo
 uv venv .venv
 uv pip install --python .venv/bin/python -r requirements.txt  # when present
 uv pip install --python .venv/bin/python jupyterlab matplotlib
@@ -128,6 +145,7 @@ match the paper's published results.
 Each model call and Docker check prints its stage. The run directory contains:
 
 - `plan.json`: overview and file instructions.
+- `source/paper.txt`: frozen input text, including expanded LaTeX fragments.
 - `generated/`: original generated files; `repairs/`: subsequent changes.
 - `calls/`: rendered prompts, raw responses, and call reservations.
 - `checks/`: Docker stdout, stderr, and results.
@@ -136,7 +154,7 @@ Each model call and Docker check prints its stage. The run directory contains:
   and notebook path/status (`unexecuted` or `not_generated`).
 
 ```bash
-uv run python -m codes.workflow --resume outputs/AlphaEvolve_simple
+uv run python -m codes.workflow --resume outputs/arma_arxiv
 ```
 
 Resume reuses saved files, tests and matching notebooks, and preserves call/repair budgets. Changed
@@ -144,6 +162,8 @@ code, prompts or dependencies require a new run. Runs from the previous strict
 workflow are incompatible; retain their logs and start in new directories. If a
 resumed result differs from an existing export, its new path is under `exports/`
 in the run directory; existing files and user edits are preserved.
+Resume uses the frozen paper text, so the original source bundle can be moved or
+deleted. Start a fresh run to incorporate edits to the paper or its included files.
 
 ## Test the pipeline
 

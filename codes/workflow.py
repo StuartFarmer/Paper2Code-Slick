@@ -31,7 +31,7 @@ def executor_image(name: str) -> tuple[str, str]:
     return info["Id"], info["Os"] + "/" + info["Architecture"]
 
 
-def inputs(original: bytes) -> dict[str, str]:
+def inputs(original: bytes, paper: str) -> dict[str, str]:
     paths = [
         *sorted((ROOT / "codes").rglob("*.py")),
         *sorted((ROOT / "codes/prompts/simple").glob("*.j2")),
@@ -42,6 +42,7 @@ def inputs(original: bytes) -> dict[str, str]:
     ]
     hashes = {str(p.relative_to(ROOT)): digest(p.read_bytes()) for p in paths}
     hashes["paper"] = digest(original)
+    hashes["paper_text"] = digest(paper.encode())
     hashes["runtime"] = digest(
         json.dumps(
             {p: version(p) for p in ("slick-ai", "pydantic", "Jinja2")}, sort_keys=True
@@ -100,8 +101,12 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--executor-image", help="Locally built Docker image (default: paper2code-executor:local)"
     )
-    parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--output-repo-dir", type=Path)
+    parser.add_argument(
+        "--output-dir", type=Path, help="Run folder (default: unused outputs/<paper stem>)"
+    )
+    parser.add_argument(
+        "--output-repo-dir", type=Path, help="Export folder (default: <run folder>/repo)"
+    )
     for flag in ("concurrency", "max-calls", "run-timeout"):
         parser.add_argument("--" + flag, type=int)
     args = parser.parse_args(argv)
@@ -121,7 +126,7 @@ def main(argv=None) -> int:
             with RunStore.open(args.resume) as store:
                 paper = store.read_artifact("source/paper.txt")
                 original = store.read_artifact("source/original.txt").encode()
-                if inputs(original) != store.manifest.input_hashes:
+                if inputs(original, paper) != store.manifest.input_hashes:
                     raise ValueError(
                         "Source code, prompts, or dependencies changed; create a new run"
                     )
@@ -137,12 +142,43 @@ def main(argv=None) -> int:
         original = args.paper.read_bytes()
         if not paper.strip():
             raise ValueError("Paper contains no text")
-        root = (args.output_dir or Path("outputs/Transformer")).resolve()
-        repo = (args.output_repo_dir or Path("outputs/Transformer_repo")).resolve()
-        if root == repo or root in repo.parents or repo in root.parents:
-            raise ValueError("Run and export directories must be distinct and not nested")
+        root = (args.output_dir or Path("outputs") / args.paper.stem).resolve()
+        if args.output_dir is None:
+            base = root
+            number = 2
+            while root.exists() or root.is_symlink():
+                root = base.with_name(f"{base.name}-{number}")
+                number += 1
+        repo = (args.output_repo_dir or root / "repo").resolve()
+        if root == repo or repo in root.parents:
+            raise ValueError("Export directory must not overlap or contain the run directory")
+        if root in repo.parents and repo.relative_to(root).parts[0] in {
+            "manifest.json",
+            "artifacts.json",
+            "run.lock",
+            "state.json",
+            "events.jsonl",
+            "source",
+            "prompts",
+            "calls",
+            "generated",
+            "repairs",
+            "snapshots",
+            "suite",
+            "checks",
+            "exports",
+            "notebooks",
+            "plan.json",
+            "tests.py",
+            "report.json",
+            "report.md",
+        }:
+            raise ValueError("Export directory overlaps run state; use <run directory>/repo")
         if root.exists() or repo.exists():
-            raise FileExistsError("Use unused output directories, or --resume for an existing run")
+            raise FileExistsError(
+                "Output already exists. Omit output flags to choose a fresh folder, "
+                "or use --resume RUN_DIRECTORY"
+            )
         if not os.environ.get("OPENROUTER_API_KEY"):
             raise ValueError("Set OPENROUTER_API_KEY before starting a run")
         limits = Limits(
@@ -152,7 +188,7 @@ def main(argv=None) -> int:
         model = args.model or DEFAULT_MODEL
         manifest = RunManifest(
             run_id=uuid.uuid4().hex,
-            input_hashes=inputs(original),
+            input_hashes=inputs(original, paper),
             image_id=image_id,
             platform=platform,
             models={
@@ -165,6 +201,7 @@ def main(argv=None) -> int:
         with RunStore.create(root, manifest) as store:
             store.save_artifact("source/paper.txt", paper)
             store.save_artifact("source/original.txt", original.decode())
+            print(f"Run: {root}\nRepository: {repo}", flush=True)
             return run(store, paper)
     except KeyboardInterrupt:
         print("Cancelled; evidence retained. Resume with --resume RUN_DIRECTORY.", file=sys.stderr)

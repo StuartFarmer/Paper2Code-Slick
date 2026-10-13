@@ -170,9 +170,11 @@ def test_complete_workflow_uses_real_execution(tmp_path, monkeypatch):
     )
     paper, settings, responses = case(tmp_path)
     settings.image_id = os.environ["P2C_TEST_IMAGE"]
+    settings.output_repo = str(tmp_path / "run/repo")
     with RunStore.create(tmp_path / "run", settings) as store:
         coder = PaperCoder(store, ScriptedProvider(responses))
         output = asyncio.run(run_workflow(coder, paper))
+        assert output == tmp_path / "run/repo"
         assert (output / "a.py").exists()
         report = json.loads((store.root / "report.json").read_text())
         assert report["tests_verified"]

@@ -57,3 +57,65 @@ def test_resume_rejects_model_override_before_reading_run():
     with pytest.raises(SystemExit) as error:
         workflow.main(["--resume", "missing", "--model", "openai/gpt-oss-120b:nitro"])
     assert error.value.code == 2
+
+
+@pytest.mark.parametrize("explicit_outputs", [False, True])
+def test_tex_path_runs_with_nested_export_and_frozen_includes(
+    tmp_path, monkeypatch, explicit_outputs
+):
+    # Arrange
+    source, _, responses = case(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "paper.tex").write_text(r"\input{method}")
+    (tmp_path / "method.tex").write_text(source)
+    provider = ScriptedProvider(responses)
+    monkeypatch.setattr(workflow, "OpenRouterAPI", lambda **kwargs: provider)
+    monkeypatch.setattr(workflow, "executor_image", lambda name: ("sha256:image", "linux/arm64"))
+    monkeypatch.setattr(workflow, "run_check", ScriptedExecutor())
+    monkeypatch.setattr(workflow, "cleanup_run", lambda run_id: None)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-not-a-real-key")
+    root = tmp_path / "outputs/paper"
+    args = ["paper.tex"]
+    if explicit_outputs:
+        args += ["--output-dir", str(root), "--output-repo-dir", str(root / "repo")]
+    # Act
+    result = workflow.main(args)
+    (tmp_path / "method.tex").unlink()
+    resumed = workflow.main(["--resume", str(root)])
+    # Assert
+    assert result == resumed == 0
+    assert (root / "repo/experiment.ipynb").exists()
+    assert source in (root / "source/paper.txt").read_text()
+    assert source in provider.contexts[0]
+    assert len(provider.contexts) == 4
+
+
+def test_automatic_output_names_preserve_prior_runs(tmp_path, monkeypatch):
+    # Arrange
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "paper.tex").write_text("A paper")
+    prior = tmp_path / "outputs/paper"
+    prior.mkdir(parents=True)
+    (prior / "keep.txt").write_text("user data")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-not-a-real-key")
+    monkeypatch.setattr(workflow, "executor_image", lambda name: ("sha256:image", "linux/arm64"))
+    monkeypatch.setattr(workflow, "run", lambda store, paper: 0)
+    # Act
+    result = workflow.main(["paper.tex"])
+    # Assert
+    assert result == 0
+    assert (prior / "keep.txt").read_text() == "user data"
+    manifest = json.loads((tmp_path / "outputs/paper-2/manifest.json").read_text())
+    assert manifest["output_repo"] == str(tmp_path / "outputs/paper-2/repo")
+
+
+@pytest.mark.parametrize("destination", ["run", "run/source", "run/calls/repo", "."])
+def test_export_cannot_overlap_controller_state(tmp_path, monkeypatch, destination, capsys):
+    # Arrange
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "paper.tex").write_text("A paper")
+    # Act
+    result = workflow.main(["paper.tex", "--output-dir", "run", "--output-repo-dir", destination])
+    # Assert
+    assert result == 1 and not (tmp_path / "run").exists()
+    assert "overlap" in capsys.readouterr().err

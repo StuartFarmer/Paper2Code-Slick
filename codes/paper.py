@@ -1,7 +1,53 @@
 """Load paper text and remove PDF extraction metadata."""
 
 import json
+import re
+import sys
 from pathlib import Path
+
+
+def load_tex(path: Path) -> str:
+    root = path.resolve().parent
+    # shortcut: expand literal includes only; use a TeX parser if macro expansion is needed.
+    commands = re.compile(
+        r"%[^\n]*|\\[%\\]|"
+        r"\\begin\{(?P<literal>verbatim\*?|lstlisting|minted)\}.*?\\end\{(?P=literal)\}|"
+        r"\\verb\*?(?P<delimiter>[^\w\s]).*?(?P=delimiter)|"
+        r"\\(?:input|include)(?![a-zA-Z@])\s*(?:\{(?P<braced>[^{}]*)\}|(?P<bare>[^\s%{}]+))",
+        re.DOTALL,
+    )
+
+    def expand(current: Path, ancestors: tuple[Path, ...]) -> str:
+        def replace(match):
+            name = match.group("braced") or match.group("bare")
+            if name is None:
+                return match.group()
+            name = name.strip()
+            if not name or "\\" in name or "#" in name:
+                reason = "nonliteral filename"
+            else:
+                relative = Path(name)
+                if not relative.suffix:
+                    relative = relative.with_suffix(".tex")
+                reason = "missing file"
+                # TeX paths normally start at the main file; also accept fragment-local paths.
+                for base in dict.fromkeys([root, current.parent]):
+                    target = (base / relative).resolve()
+                    if not target.is_relative_to(root):
+                        reason = "outside the source folder"
+                        continue
+                    if target in ancestors or len(ancestors) >= 64:
+                        reason = "include cycle or excessive nesting"
+                        break
+                    if target.is_file():
+                        return expand(target, (*ancestors, target))
+            print(f"Warning: {current.name}: keeping {match.group()} ({reason})", file=sys.stderr)
+            return match.group()
+
+        return commands.sub(replace, current.read_text(encoding="utf-8"))
+
+    path = path.resolve()
+    return expand(path, (path,))
 
 
 def remove_spans(data):
@@ -27,6 +73,8 @@ def remove_spans(data):
 
 
 def load_paper(path: Path) -> tuple[str, str]:
+    if path.suffix.lower() == ".tex":
+        return load_tex(path), "LaTeX"
     text = path.read_text(encoding="utf-8")
     if path.suffix.lower() == ".json":
         # Match the original prompts' Python representation of parsed JSON.
