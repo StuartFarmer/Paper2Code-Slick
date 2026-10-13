@@ -90,23 +90,29 @@ def test_tex_path_runs_with_nested_export_and_frozen_includes(
     assert len(provider.contexts) == 4
 
 
-def test_automatic_output_names_preserve_prior_runs(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "source_dir", [".", "sources/arXiv-1302.6927v1", "sources/arXiv-1302.6927v1/paper"]
+)
+def test_automatic_output_names_preserve_prior_runs(tmp_path, monkeypatch, source_dir):
     # Arrange
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "paper.tex").write_text("A paper")
-    prior = tmp_path / "outputs/paper"
+    paper = tmp_path / source_dir / "paper.tex"
+    paper.parent.mkdir(parents=True, exist_ok=True)
+    paper.write_text("A paper")
+    name = "paper" if source_dir == "." else "arXiv-1302.6927v1"
+    prior = tmp_path / "outputs" / name
     prior.mkdir(parents=True)
     (prior / "keep.txt").write_text("user data")
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-not-a-real-key")
     monkeypatch.setattr(workflow, "executor_image", lambda name: ("sha256:image", "linux/arm64"))
     monkeypatch.setattr(workflow, "run", lambda store, paper: 0)
     # Act
-    result = workflow.main(["paper.tex"])
+    result = workflow.main([str(paper)])
     # Assert
     assert result == 0
     assert (prior / "keep.txt").read_text() == "user data"
-    manifest = json.loads((tmp_path / "outputs/paper-2/manifest.json").read_text())
-    assert manifest["output_repo"] == str(tmp_path / "outputs/paper-2/repo")
+    manifest = json.loads((tmp_path / "outputs" / f"{name}-2/manifest.json").read_text())
+    assert manifest["output_repo"] == str(tmp_path / "outputs" / f"{name}-2/repo")
 
 
 @pytest.mark.parametrize("destination", ["run", "run/source", "run/calls/repo", "."])

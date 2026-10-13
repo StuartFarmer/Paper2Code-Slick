@@ -102,7 +102,9 @@ def main(argv=None) -> int:
         "--executor-image", help="Locally built Docker image (default: paper2code-executor:local)"
     )
     parser.add_argument(
-        "--output-dir", type=Path, help="Run folder (default: unused outputs/<paper stem>)"
+        "--output-dir",
+        type=Path,
+        help="Run folder (default: unused outputs/<arXiv folder or paper stem>)",
     )
     parser.add_argument(
         "--output-repo-dir", type=Path, help="Export folder (default: <run folder>/repo)"
@@ -142,7 +144,15 @@ def main(argv=None) -> int:
         original = args.paper.read_bytes()
         if not paper.strip():
             raise ValueError("Paper contains no text")
-        root = (args.output_dir or Path("outputs") / args.paper.stem).resolve()
+        paper_name = next(
+            (
+                parent.name
+                for parent in args.paper.resolve().parents
+                if parent.name.lower().startswith("arxiv-")
+            ),
+            args.paper.stem,
+        )
+        root = (args.output_dir or Path("outputs") / paper_name).resolve()
         if args.output_dir is None:
             base = root
             number = 2

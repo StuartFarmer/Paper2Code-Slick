@@ -45,9 +45,11 @@ with a warning. TeX commands are never executed. Markdown and extracted `.json`
 are also accepted; PDFs and directories are not.
 
 The default model is `openai/gpt-oss-120b:nitro`. Outputs go to
-`outputs/<paper filename without extension>/`, with code and `experiment.ipynb`
-inside `repo/`. For the command above, that's `outputs/arma_arxiv/repo/`.
-Repeated runs automatically use `arma_arxiv-2`, `arma_arxiv-3`, etc. The CLI prints
+`outputs/<enclosing arXiv folder>/`, with code and `experiment.ipynb`
+inside `repo/`. For the command above, that's `outputs/arXiv-1302.6927v1/repo/`,
+including when the main TeX file is in a nested `paper/` folder. Without an enclosing
+`arXiv-…` folder, the filename without its extension is used.
+Repeated runs automatically append `-2`, `-3`, etc. The CLI prints
 the selected paths before generation. Existing runs are preserved.
 
 Output flags remain optional. This nested layout also works:
@@ -126,7 +128,7 @@ path in `report.json`. From that repository, install its generated requirements
 (when present), plus JupyterLab and matplotlib in your chosen environment. For example:
 
 ```bash
-cd outputs/arma_arxiv/repo
+cd outputs/arXiv-1302.6927v1/repo
 uv venv .venv
 uv pip install --python .venv/bin/python -r requirements.txt  # when present
 uv pip install --python .venv/bin/python jupyterlab matplotlib
@@ -154,7 +156,7 @@ Each model call and Docker check prints its stage. The run directory contains:
   and notebook path/status (`unexecuted` or `not_generated`).
 
 ```bash
-uv run python -m codes.workflow --resume outputs/arma_arxiv
+uv run python -m codes.workflow --resume outputs/arXiv-1302.6927v1
 ```
 
 Resume reuses saved files, tests and matching notebooks, and preserves call/repair budgets. Changed
