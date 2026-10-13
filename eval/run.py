@@ -22,7 +22,7 @@ def snapshot_baseline(destination: Path, *, source: Path | None = None) -> dict[
         if path.is_file():
             contents[name] = path.read_bytes()
     revision = subprocess.run(
-        ["git", "-C", str(source), "rev-parse", "HEAD"], capture_output=True, text=True
+        ["git", "-C", str(source), "rev-parse", "HEAD"], capture_output=True, text=True, check=False
     )
     files = {name: hashlib.sha256(data).hexdigest() for name, data in contents.items()}
     destination.mkdir(parents=True, exist_ok=False)

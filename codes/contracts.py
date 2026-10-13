@@ -212,3 +212,40 @@ class CallRecord(BaseModel, extra="forbid"):
     finished: float | None = None
     measured_tokens: int | None = None
     measured_cost: float | None = None
+
+
+class CheckSpec(BaseModel, extra="forbid"):
+    id: Text
+    kind: Literal["syntax", "imports", "pytest", "smoke"]
+    targets: list[Text] = Field(min_length=1)
+    timeout_seconds: float = Field(default=120, gt=0, le=300)
+
+
+class ExecutionResult(BaseModel, extra="forbid"):
+    check_id: Text
+    candidate_hash: str
+    dependency_hash: str
+    suite_hash: str
+    image_id: str
+    argv: list[str]
+    exit_code: int | None
+    status: Literal["passed", "failed", "timeout", "oom", "cancelled", "infrastructure_error"]
+    duration_seconds: float
+    stdout_artifact: str
+    stderr_artifact: str
+    output_truncated: bool
+    collected_tests: int | None = None
+    property_statistics: dict = Field(default_factory=dict)
+    replay_complete: bool = True
+
+
+class RunnerReport(BaseModel, extra="forbid", strict=True):
+    kind: Literal["syntax", "imports", "pytest", "smoke"]
+    targets: list[str]
+    exit_code: int
+    collected: list[str]
+    passed: list[str]
+    failed: list[str]
+    skipped: list[str]
+    errors: list[str]
+    property_statistics: dict = Field(default_factory=dict)
