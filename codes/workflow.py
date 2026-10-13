@@ -210,7 +210,7 @@ class PaperCoder:
 
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("paper", type=Path, help="PDF extraction JSON or LaTeX source")
+    parser.add_argument("paper", type=Path, help="PDF extraction JSON, Markdown, or LaTeX source")
     parser.add_argument(
         "--model",
         default="codex",

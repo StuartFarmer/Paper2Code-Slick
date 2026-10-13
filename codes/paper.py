@@ -31,4 +31,6 @@ def load_paper(path: Path) -> tuple[str, str]:
     if path.suffix.lower() == ".json":
         # Match the original prompts' Python representation of parsed JSON.
         return str(remove_spans(json.loads(text))), "JSON"
+    if path.suffix.lower() in {".md", ".markdown"}:
+        return text, "Markdown"
     return text, "LaTeX"

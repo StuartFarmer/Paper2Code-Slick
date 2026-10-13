@@ -38,8 +38,10 @@ python -m codes.workflow examples/Transformer.json \
 ```
 
 The JSON input is a paper extracted from a PDF, not the PDF itself. Extraction
-metadata is removed automatically. For LaTeX, pass
-`examples/Transformer_cleaned.tex` instead. To prepare a PDF, use a converter
+metadata is removed automatically. Markdown (`.md` or `.markdown`) and LaTeX
+(`.tex`) are read as text; for example, pass `paper.md` or
+`examples/Transformer_cleaned.tex` instead. Markdown extensions are recognized
+regardless of case and labeled as Markdown in the prompts. To prepare a PDF, use a converter
 such as [s2orc-doc2json](https://github.com/allenai/s2orc-doc2json) first.
 
 The CLI defaults to `codex`, `outputs/Transformer`, and

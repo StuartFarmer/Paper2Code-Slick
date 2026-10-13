@@ -143,6 +143,21 @@ def test_loads_json_with_span_cleanup_and_latex_verbatim(tmp_path):
     assert load_paper(paper) == ("\\section{Method}\nPaper body", "LaTeX")
 
 
+@pytest.mark.parametrize("suffix", [".md", ".markdown", ".MD", ".MARKDOWN"])
+def test_markdown_keeps_its_text_and_format_in_prompts(tmp_path, suffix):
+    paper = tmp_path / f"paper{suffix}"
+    body = "# Method\n\nKeep **formatting** and `code` unchanged.\n"
+    paper.write_text(body)
+    text, paper_format = load_paper(paper)
+    assert (text, paper_format) == (body, "Markdown")
+    provider = ScriptedProvider(responses())
+    coder = PaperCoder(text, paper_format, provider, tmp_path / "artifacts", tmp_path / "repo")
+    asyncio.run(coder.run())
+    for index in (0, 4, 6):
+        assert "in Markdown format" in provider.contexts[index]
+        assert body in provider.contexts[index]
+
+
 def test_config_is_not_regenerated_and_plain_code_is_preserved(tmp_path):
     supplied = responses(("config.yaml", "main.py"))[:4]
     supplied += ["Analyze main.", "<think>Reasoning</think>print('hello')\n"]
